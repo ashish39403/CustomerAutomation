@@ -10,7 +10,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton"
 import { REFRESH_MS } from "@/lib/constants"
 import { fetchJobs, fetchStats, fetchTickets, isNotImplemented, retryJob } from "@/lib/api"
-import { sortByUpdatedDesc } from "@/lib/tickets"
 import type { JobListItem, Ticket } from "@/lib/types"
 
 export function OverviewPage() {
@@ -25,9 +24,8 @@ export function OverviewPage() {
   })
   const ticketsQuery = useQuery({
     queryKey: ["tickets", "all", "overview"],
-    queryFn: () => fetchTickets(),
+    queryFn: () => fetchTickets({ page_size: 8 }),
     refetchInterval: REFRESH_MS,
-    select: sortByUpdatedDesc,
   })
 
   // --- real operational data, wired to the live backend ---
@@ -45,8 +43,6 @@ export function OverviewPage() {
   })
 
   const stats = statsQuery.data
-  const totalToday =
-    stats === undefined ? undefined : stats.auto_replied + stats.handed_off + stats.pending
 
   const statsBlocked = statsQuery.isError && isNotImplemented(statsQuery.error)
 
@@ -93,7 +89,7 @@ export function OverviewPage() {
           />
           <StatCard
             label="Total today"
-            value={totalToday}
+            value={stats?.today_total}
             icon={<Inbox />}
             tone="neutral"
             hint="All handled today"
@@ -139,7 +135,7 @@ export function OverviewPage() {
             </div>
           ) : (
             <TicketTable
-              tickets={(ticketsQuery.data ?? []).slice(0, 8)}
+              tickets={ticketsQuery.data?.items ?? []}
               loading={false}
               error={ticketsQuery.error ?? null}
               onRetry={() => void ticketsQuery.refetch()}

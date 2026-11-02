@@ -2,17 +2,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   ApiError,
   fetchMe,
+  fetchDocuments,
   fetchJobs,
   fetchTicket,
   fetchTickets,
   fetchStats,
   login,
+  normalizeDocument,
+  normalizeDocumentList,
   normalizeJob,
   normalizeJobList,
   normalizeMessage,
+  normalizeTicket,
   normalizeTicketDetail,
+  normalizeTicketList,
   postReply,
   setUnauthorizedHandler,
+  ticketAction,
+  uploadDocument,
 } from "./api"
 import type { TicketDetail } from "./types"
 
@@ -31,11 +38,14 @@ function mockFetch(handler: (url: string, init?: RequestInit) => Promise<Respons
   return mock
 }
 
-const ticket = {
-  id: 3,
+const TICKET_ID = "11111111-2222-3333-4444-555555555555"
+
+const ticketRow = {
+  id: TICKET_ID,
   customer_email: "jane@example.com",
   subject: "Where is my pump?",
   status: "pending",
+  created_at: "2026-01-01T09:00:00Z",
   updated_at: "2026-01-02T10:00:00Z",
 }
 
@@ -52,12 +62,12 @@ afterEach(() => {
 describe("api client", () => {
   it("fetchStats sends a GET with credentials under /api", async () => {
     const fetchMock = mockFetch(async () =>
-      jsonResponse({ auto_replied: 4, handed_off: 2, pending: 1 }),
+      jsonResponse({ auto_replied: 4, handed_off: 2, pending: 1, today_total: 7 }),
     )
 
     const stats = await fetchStats()
 
-    expect(stats).toEqual({ auto_replied: 4, handed_off: 2, pending: 1 })
+    expect(stats).toEqual({ auto_replied: 4, handed_off: 2, pending: 1, today_total: 7 })
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(url).toBe(`${BASE}/api/stats`)
     expect(init.method).toBeUndefined()
@@ -81,20 +91,23 @@ describe("api client", () => {
     expect(JSON.parse(init.body as string)).toEqual({ email: "admin", password: "secret" })
   })
 
-  it("fetchMe probes the session without triggering a logout", async () => {
+  it("fetchMe tolerates the unwrapped user object", async () => {
     const unauthorized = vi.fn()
     setUnauthorizedHandler(unauthorized)
-    const fetchMock = mockFetch(async () => jsonResponse({}, 401))
+    const fetchMock = mockFetch(async () =>
+      jsonResponse({ id: "u1", email: "admin@local", display_name: "admin", role: "admin" }),
+    )
 
-    await expect(fetchMe()).rejects.toBeInstanceOf(ApiError)
-    expect(unauthorized).toHaveBeenCalledTimes(1)
-    const [url] = fetchMock.mock.calls[0] as [string]
-    expect(url).toBe(`${BASE}/api/auth/me`)
+    const me = await fetchMe()
+
+    expect(me.role).toBe("admin")
+    expect(unauthorized).not.toHaveBeenCalled()
+    expect(fetchMock.mock.calls[0][0]).toBe(`${BASE}/api/auth/me`)
   })
 
   it("fetchJobs builds query params and unwraps the envelope", async () => {
     const jobRow = {
-      id: "11111111-2222-3333-4444-555555555555",
+      id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
       job_type: "gmail_poll",
       status: "queued",
       attempts: 0,
@@ -118,13 +131,92 @@ describe("api client", () => {
     expect(url).toBe(`${BASE}/api/jobs?status=dead&limit=12`)
   })
 
-  it("fetchTickets builds status and page query params", async () => {
-    const fetchMock = mockFetch(async () => jsonResponse([ticket]))
+  it("fetchTickets builds status, page, page_size and q params", async () => {
+    const fetchMock = mockFetch(async () =>
+      jsonResponse({
+        items: [ticketRow],
+        total: 11,
+        page: 2,
+        page_size: 10,
+        pages: 2,
+      }),
+    )
 
-    await fetchTickets({ status: "pending", page: 2 })
+    const envelope = await fetchTickets({
+      status: "pending",
+      page: 2,
+      page_size: 10,
+      q: "jane",
+    })
 
+    expect(envelope.total).toBe(11)
+    expect(envelope.pages).toBe(2)
+    expect(envelope.items[0].id).toBe(TICKET_ID)
     const [url] = fetchMock.mock.calls[0] as [string]
-    expect(url).toBe(`${BASE}/api/tickets?status=pending&page=2`)
+    expect(url).toBe(`${BASE}/api/tickets?status=pending&page=2&page_size=10&q=jane`)
+  })
+
+  it("fetchTicket and postReply use the UUID string id", async () => {
+    const detail = {
+      ...ticketRow,
+      messages: [
+        { id: "cccccccc-0000-1111-2222-333333333333", author: "customer", body: "Hi", created_at: "2026-01-01T09:00:00Z" },
+      ],
+      classification: "shipping",
+      reasoning: "Stock checked",
+    }
+    mockFetch(async () => jsonResponse(detail))
+
+    const fetched = await fetchTicket(TICKET_ID)
+    expect((fetched as TicketDetail).id).toBe(TICKET_ID)
+
+    const fetchMock = mockFetch(async () => jsonResponse(detail.messages[0]))
+    await postReply(TICKET_ID, "Replacement shipped")
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe(`${BASE}/api/tickets/${TICKET_ID}/reply`)
+    expect(init.method).toBe("POST")
+    expect(JSON.parse(init.body as string)).toEqual({ body: "Replacement shipped" })
+  })
+
+  it("ticketAction posts to the action path", async () => {
+    const fetchMock = mockFetch(async () =>
+      jsonResponse({ id: TICKET_ID, status: "handed_off", assigned_to: null }),
+    )
+
+    await ticketAction("escalate", TICKET_ID)
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe(`${BASE}/api/tickets/${TICKET_ID}/escalate`)
+    expect(init.method).toBe("POST")
+  })
+
+  it("uploadDocument sends multipart without a manual content type", async () => {
+    const fetchMock = mockFetch(async () => jsonResponse(normalizedDocumentRow()))
+
+    const file = new File(["hello"], "faq.md", { type: "text/markdown" })
+    await uploadDocument(file, "dddddddd-0000-1111-2222-333333333333")
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe(`${BASE}/api/documents`)
+    expect(init.method).toBe("POST")
+    expect(init.body).toBeInstanceOf(FormData)
+    const formData = init.body as FormData
+    expect(formData.get("file")).toBeInstanceOf(File)
+    expect(formData.get("replace_id")).toBe("dddddddd-0000-1111-2222-333333333333")
+    const headers = init.headers as Record<string, string>
+    expect(headers["Content-Type"]).toBeUndefined()
+  })
+
+  it("fetchDocuments unwraps the items array", async () => {
+    const fetchMock = mockFetch(async () => jsonResponse({ items: [normalizedDocumentRow()] }))
+
+    const documents = await fetchDocuments()
+
+    expect(documents).toHaveLength(1)
+    expect(documents[0].id).toBe("eeeeeeee-1111-2222-3333-444444444444")
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).toBe(`${BASE}/api/documents`)
   })
 
   it("a 401 elsewhere fires the unauthorized handler", async () => {
@@ -139,7 +231,7 @@ describe("api client", () => {
   it("surfaces the FastAPI error detail on failure", async () => {
     mockFetch(async () => jsonResponse({ detail: "Ticket not found" }, 404))
 
-    const error = await fetchTicket(999).catch((caught: unknown) => caught)
+    const error = await fetchTicket(TICKET_ID).catch((caught: unknown) => caught)
 
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).status).toBe(404)
@@ -157,18 +249,22 @@ describe("api client", () => {
     expect((error as ApiError).status).toBe(0)
     expect((error as ApiError).message).toContain("Network error")
   })
-
-  it("postReply sends the reply body", async () => {
-    const fetchMock = mockFetch(async () => jsonResponse({ ok: true }))
-
-    await postReply(7, "Replacement shipped")
-
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe(`${BASE}/api/tickets/7/reply`)
-    expect(init.method).toBe("POST")
-    expect(JSON.parse(init.body as string)).toEqual({ body: "Replacement shipped" })
-  })
 })
+
+function normalizedDocumentRow() {
+  return {
+    id: "eeeeeeee-1111-2222-3333-444444444444",
+    title: "faq.md",
+    object_key: "kb/faq.md",
+    mime_type: "text/markdown",
+    size_bytes: 3203,
+    checksum: "abc123",
+    version: 2,
+    status: "indexed",
+    created_at: "2026-01-01T08:00:00Z",
+    indexed_at: "2026-01-01T08:01:00Z",
+  }
+}
 
 describe("normalizers", () => {
   it("normalizes a job row", () => {
@@ -199,25 +295,50 @@ describe("normalizers", () => {
     expect(normalizeJobList({ items: [{ id: "a" }], total: 7 }).total).toBe(7)
   })
 
+  it("keeps UUID ticket ids as strings (no NaN coercion)", () => {
+    expect(normalizeTicket(ticketRow).id).toBe(TICKET_ID)
+    expect(
+      normalizeMessage({ id: TICKET_ID, author: "customer", body: "Hi", created_at: "" }).id,
+    ).toBe(TICKET_ID)
+  })
+
+  it("parses the server pagination envelope and tolerates a bare list", () => {
+    const envelope = normalizeTicketList({
+      items: [ticketRow],
+      total: 11,
+      page: 2,
+      page_size: 10,
+      pages: 2,
+    })
+    expect(envelope).toMatchObject({ total: 11, page: 2, page_size: 10, pages: 2 })
+
+    const bare = normalizeTicketList([ticketRow])
+    expect(bare).toMatchObject({
+      items: [expect.objectContaining({ id: TICKET_ID })],
+      total: 1,
+      pages: 1,
+    })
+  })
+
   it("maps author aliases to the MessageAuthor contract", () => {
     expect(
-      normalizeMessage({ id: 1, role: "customer", body: "Need help", created_at: "2026-01-01" }),
+      normalizeMessage({ id: "1", role: "customer", body: "Need help", created_at: "2026-01-01" }),
     ).toMatchObject({ author: "customer" })
     expect(
-      normalizeMessage({ id: 2, direction: "in", body: "Need help", created_at: "" }),
+      normalizeMessage({ id: "2", direction: "in", body: "Need help", created_at: "" }),
     ).toMatchObject({ author: "customer" })
     expect(
-      normalizeMessage({ id: 3, author: "bot", body: "Ships tomorrow", created_at: "" }),
+      normalizeMessage({ id: "3", author: "bot", body: "Ships tomorrow", created_at: "" }),
     ).toMatchObject({ author: "bot" })
     expect(
-      normalizeMessage({ id: 4, role: "agent", body: "Fixed", created_at: "" }),
+      normalizeMessage({ id: "4", role: "agent", body: "Fixed", created_at: "" }),
     ).toMatchObject({ author: "human" })
   })
 
   it("accepts the thread under messages or thread and optional reasoning", () => {
     const raw = {
-      ...ticket,
-      thread: [{ id: 1, role: "customer", body: "Need help", created_at: "2026-01-01" }],
+      ...ticketRow,
+      thread: [{ id: "1", role: "customer", body: "Need help", created_at: "2026-01-01" }],
       reasoning: "Stock levels checked",
       classification: "shipping",
     }
@@ -228,5 +349,12 @@ describe("normalizers", () => {
     expect(detail.messages[0]).toMatchObject({ author: "customer", body: "Need help" })
     expect(detail.reasoning).toBe("Stock levels checked")
     expect(detail.classification).toBe("shipping")
+  })
+
+  it("normalizes documents and unknown statuses", () => {
+    const document = normalizeDocument(normalizedDocumentRow())
+    expect(document).toMatchObject({ title: "faq.md", version: 2, status: "indexed" })
+    expect(normalizeDocument({ id: "x", size_bytes: "5" }).size_bytes).toBe(5)
+    expect(normalizeDocumentList({ items: [normalizedDocumentRow()] })).toHaveLength(1)
   })
 })

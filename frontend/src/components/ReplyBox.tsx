@@ -1,11 +1,11 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useState, type KeyboardEvent } from "react"
-import { SendHorizontal } from "lucide-react"
+import { FileText, SendHorizontal } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
-import { apiErrorMessage, postReply } from "@/lib/api"
+import { apiErrorMessage, patchDraft, postReply } from "@/lib/api"
 import type { TicketDetail } from "@/lib/types"
 
 export interface ReplyBoxProps {
@@ -27,12 +27,28 @@ export function ReplyBox({ ticket, onClose }: ReplyBoxProps) {
     },
   })
 
+  // Saves the text without sending it; the customer never sees a draft.
+  const draftMutation = useMutation({
+    mutationFn: (body: string) => patchDraft(ticket.id, body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["ticket", ticket.id] })
+    },
+  })
+
   function send() {
     const trimmed = text.trim()
     if (trimmed === "" || mutation.isPending) {
       return
     }
     mutation.mutate(trimmed)
+  }
+
+  function saveDraft() {
+    const trimmed = text.trim()
+    if (trimmed === "" || draftMutation.isPending) {
+      return
+    }
+    draftMutation.mutate(trimmed)
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -45,6 +61,8 @@ export function ReplyBox({ ticket, onClose }: ReplyBoxProps) {
       onClose?.()
     }
   }
+
+  const busy = mutation.isPending || draftMutation.isPending
 
   return (
     <form
@@ -67,19 +85,31 @@ export function ReplyBox({ ticket, onClose }: ReplyBoxProps) {
           <p className="text-[11px] text-muted-foreground">
             Enter to send · Shift+Enter for a new line · Esc to clear
           </p>
-          <Button type="submit" size="sm" disabled={text.trim() === "" || mutation.isPending}>
-            {mutation.isPending ? (
-              <>
-                <Spinner className="text-primary-foreground" />
-                Sending…
-              </>
-            ) : (
-              <>
-                <SendHorizontal />
-                Send reply
-              </>
-            )}
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={text.trim() === "" || busy}
+              onClick={saveDraft}
+            >
+              {draftMutation.isPending ? <Spinner className="size-3.5" /> : <FileText />}
+              Save draft
+            </Button>
+            <Button type="submit" size="sm" disabled={text.trim() === "" || busy}>
+              {mutation.isPending ? (
+                <>
+                  <Spinner className="text-primary-foreground" />
+                  Sending…
+                </>
+              ) : (
+                <>
+                  <SendHorizontal />
+                  Send reply
+                </>
+              )}
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -87,6 +117,14 @@ export function ReplyBox({ ticket, onClose }: ReplyBoxProps) {
         <Alert variant="destructive">
           <AlertDescription>{apiErrorMessage(mutation.error)}</AlertDescription>
         </Alert>
+      )}
+      {draftMutation.isError && (
+        <Alert variant="destructive">
+          <AlertDescription>{apiErrorMessage(draftMutation.error)}</AlertDescription>
+        </Alert>
+      )}
+      {draftMutation.isSuccess && !draftMutation.isPending && (
+        <p className="text-xs text-emerald-600 dark:text-emerald-400">Draft saved.</p>
       )}
       {mutation.isSuccess && !mutation.isPending && text === "" && (
         <p className="text-xs text-emerald-600 dark:text-emerald-400">Reply sent.</p>

@@ -41,7 +41,7 @@ export function MessageThread({
   // Thread order: oldest first, ties broken by id.
   const ordered = [...messages].sort((a, b) => {
     const byDate = Date.parse(a.created_at) - Date.parse(b.created_at)
-    return Number.isNaN(byDate) ? a.id - b.id : byDate || a.id - b.id
+    return Number.isNaN(byDate) ? 0 : byDate || (a.id > b.id ? 1 : a.id < b.id ? -1 : 0)
   })
 
   return (

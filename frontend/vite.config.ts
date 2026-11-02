@@ -22,6 +22,11 @@ export default defineConfig({
         target: "http://127.0.0.1:8010",
         changeOrigin: true,
       },
+      // The public readiness probe lives in the root: /health, /health/ready.
+      "/health": {
+        target: "http://127.0.0.1:8010",
+        changeOrigin: true,
+      },
     },
   },
   test: {

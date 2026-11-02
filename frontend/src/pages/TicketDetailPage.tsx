@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate, useParams } from "react-router-dom"
-import { ArrowLeft, ChevronDown, Sparkles } from "lucide-react"
+import { ArrowLeft, ChevronDown, CircleCheck, CircleHelp, ArrowUpRight, Sparkles } from "lucide-react"
 import { MessageThread } from "@/components/MessageThread"
 import { ReplyBox } from "@/components/ReplyBox"
 import { StatusBadge } from "@/components/status-badge"
@@ -16,11 +16,19 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
+import { Spinner } from "@/components/ui/spinner"
 import { REFRESH_MS } from "@/lib/constants"
-import { fetchTicket, isNotImplemented } from "@/lib/api"
-import { apiErrorMessage } from "@/lib/api"
+import { apiErrorMessage, fetchTicket, isNotImplemented, ticketAction } from "@/lib/api"
 import { formatDate } from "@/lib/format"
 import { cn } from "cn"
+
+const ACTIONS = [
+  { key: "escalate", label: "Escalate", icon: <ArrowUpRight /> },
+  { key: "resolve", label: "Resolve", icon: <CircleCheck /> },
+  { key: "reopen", label: "Reopen", icon: <CircleHelp /> },
+] as const
 
 /** Collapsible panel with the bot's reasoning; Esc closes it. */
 function ReasoningPanel({ reasoning }: { reasoning: string }) {
@@ -62,20 +70,37 @@ function ReasoningPanel({ reasoning }: { reasoning: string }) {
 export function TicketDetailPage() {
   const params = useParams()
   const navigate = useNavigate()
-  const ticketId = Number(params.id)
+  const queryClient = useQueryClient()
+  const ticketId = params.id ?? ""
+  const valid = ticketId.trim() !== ""
 
   const ticketQuery = useQuery({
     queryKey: ["ticket", ticketId],
     queryFn: () => fetchTicket(ticketId),
-    enabled: Number.isInteger(ticketId) && ticketId > 0,
+    enabled: valid,
     refetchInterval: REFRESH_MS,
     retry: (failureCount, error) => !isNotImplemented(error) && failureCount < 1,
   })
 
-  if (!Number.isInteger(ticketId) || ticketId <= 0) {
+  // escalate / resolve / reopen — the backend marks the ticket immediately.
+  const [busyAction, setBusyAction] = useState<string | null>(null)
+  const actionMutation = useMutation({
+    mutationFn: ({ action, id }: { action: "escalate" | "resolve" | "reopen"; id: string }) =>
+      ticketAction(action, id),
+    onSettled: () => {
+      setBusyAction(null)
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["ticket", ticketId] })
+      void queryClient.invalidateQueries({ queryKey: ["tickets"] })
+      void queryClient.invalidateQueries({ queryKey: ["stats"] })
+    },
+  })
+
+  if (!valid) {
     return (
       <ErrorState
-        message={`"${params.id}" is not a valid ticket id.`}
+        message={`"${String(params.id)}" is not a valid ticket id.`}
         onRetry={() => void navigate("/tickets")}
       />
     )
@@ -95,7 +120,7 @@ export function TicketDetailPage() {
         </Link>
         {ticket && (
           <p className="text-[11px] text-muted-foreground tabular-nums">
-            #{ticket.id} · updated {formatDate(ticket.updated_at)}
+            updated {formatDate(ticket.updated_at)}
           </p>
         )}
       </div>
@@ -137,6 +162,32 @@ export function TicketDetailPage() {
           </Card>
 
           {ticket.reasoning && <ReasoningPanel reasoning={ticket.reasoning} />}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-muted-foreground">Actions:</span>
+            {ACTIONS.map(({ key, label, icon }) => (
+              <Button
+                key={key}
+                variant="outline"
+                size="sm"
+                disabled={actionMutation.isPending}
+                onClick={() => {
+                  setBusyAction(key)
+                  actionMutation.mutate({ action: key, id: ticketId })
+                }}
+              >
+                {busyAction === key ? <Spinner className="size-3.5" /> : icon}
+                {label}
+              </Button>
+            ))}
+            {actionMutation.isError && (
+              <Alert variant="destructive" className="w-full py-2">
+                <AlertDescription className="text-xs">
+                  {apiErrorMessage(actionMutation.error)}
+                </AlertDescription>
+              </Alert>
+            )}
+          </div>
 
           <Card>
             <CardContent className="p-3">

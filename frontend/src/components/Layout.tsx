@@ -79,6 +79,9 @@ export function Layout({ children }: { children: ReactNode }) {
               <NavLink to="/tickets" className={linkClass}>
                 Tickets
               </NavLink>
+              <NavLink to="/documents" className={linkClass}>
+                Knowledge
+              </NavLink>
             </nav>
             <div className="hidden items-center gap-1.5 sm:flex">
               <UserChip />

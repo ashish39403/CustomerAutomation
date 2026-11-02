@@ -16,7 +16,14 @@ function makeTicket(
   email = `user${id}@example.com`,
   updated_at = "2026-01-01T00:00:00Z",
 ): Ticket {
-  return { id, status, subject, customer_email: email, updated_at }
+  return {
+    id: String(id),
+    status,
+    subject,
+    customer_email: email,
+    created_at: updated_at,
+    updated_at,
+  }
 }
 
 const tickets: Ticket[] = [
@@ -46,7 +53,7 @@ describe("matchesSearch", () => {
 describe("filterTickets", () => {
   it("filters by status", () => {
     const result = filterTickets(tickets, { status: "handed_off" })
-    expect(result.map((ticket) => ticket.id)).toEqual([2])
+    expect(result.map((ticket) => ticket.id)).toEqual(["2"])
   })
 
   it("returns everything for all/none", () => {
@@ -56,7 +63,7 @@ describe("filterTickets", () => {
 
   it("combines status and search", () => {
     const result = filterTickets(tickets, { status: "pending", search: "cat@example" })
-    expect(result.map((ticket) => ticket.id)).toEqual([3])
+    expect(result.map((ticket) => ticket.id)).toEqual(["3"])
     expect(filterTickets(tickets, { status: "pending", search: "panel" })).toHaveLength(0)
   })
 })
@@ -64,7 +71,7 @@ describe("filterTickets", () => {
 describe("sortByUpdatedDesc", () => {
   it("puts the newest ticket first", () => {
     const sorted = sortByUpdatedDesc([tickets[2], tickets[0], tickets[1]])
-    expect(sorted.map((ticket) => ticket.id)).toEqual([1, 2, 3])
+    expect(sorted.map((ticket) => ticket.id)).toEqual(["1", "2", "3"])
   })
 })
 
@@ -79,7 +86,7 @@ describe("paginate", () => {
 
   it("clamps invalid pages to page 1", () => {
     expect(paginate(tickets, 0)).toEqual(tickets.slice(0, PAGE_SIZE))
-    expect(paginate(tickets, -3).map((ticket) => ticket.id)).toEqual([1, 2, 3])
+    expect(paginate(tickets, -3).map((ticket) => ticket.id)).toEqual(["1", "2", "3"])
   })
 })
 

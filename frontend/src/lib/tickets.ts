@@ -40,7 +40,7 @@ export function filterTickets(
 export function sortByUpdatedDesc(tickets: Ticket[]): Ticket[] {
   return [...tickets].sort((a, b) => {
     const byDate = Date.parse(b.updated_at) - Date.parse(a.updated_at)
-    return Number.isNaN(byDate) ? b.id - a.id : byDate || b.id - a.id
+    return Number.isNaN(byDate) ? 0 : byDate || (a.id > b.id ? -1 : a.id < b.id ? 1 : 0)
   })
 }
 

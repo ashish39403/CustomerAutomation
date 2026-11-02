@@ -5,6 +5,7 @@ import { LoginPage } from "./pages/LoginPage"
 import { OverviewPage } from "./pages/OverviewPage"
 import { TicketsPage } from "./pages/TicketsPage"
 import { TicketDetailPage } from "./pages/TicketDetailPage"
+import { DocumentsPage } from "./pages/DocumentsPage"
 import { NotFoundPage } from "./pages/NotFoundPage"
 
 /**
@@ -29,6 +30,7 @@ export default function App() {
         <Route path="/" element={<OverviewPage />} />
         <Route path="/tickets" element={<TicketsPage />} />
         <Route path="/tickets/:id" element={<TicketDetailPage />} />
+        <Route path="/documents" element={<DocumentsPage />} />
       </Route>
       <Route path="*" element={<NotFoundPage />} />
     </Routes>

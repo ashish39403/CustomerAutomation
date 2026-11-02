@@ -1,4 +1,6 @@
 import type {
+  DocumentItem,
+  DraftResponse,
   GmailStatus,
   JobListItem,
   JobListResponse,
@@ -8,8 +10,10 @@ import type {
   ReplyResponse,
   StatsResponse,
   Ticket,
+  TicketActionResponse,
   TicketDetail,
   TicketFilterValue,
+  TicketListEnvelope,
   TicketMessage,
   UserSummary,
 } from "./types"
@@ -61,13 +65,15 @@ async function request<T>(
 ): Promise<T> {
   let response: Response
   try {
+    // FormData carries its own multipart boundary — never set a Content-Type.
+    const headers = { ...(init.headers as Record<string, string>) }
+    if (init.body !== undefined && !(init.body instanceof FormData)) {
+      headers["Content-Type"] = "application/json"
+    }
     response = await fetch(`${apiBaseUrl()}${path}`, {
       ...init,
       credentials: "include",
-      headers: {
-        ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
-        ...init.headers,
-      },
+      headers,
     })
   } catch {
     throw new ApiError(0, "Network error — could not reach the API")
@@ -189,7 +195,7 @@ export function retryJob(id: string): Promise<JobListItem> {
   return request<JobListItem>(`/api/jobs/${id}/retry`, { method: "POST" })
 }
 
-// -------------------------------------------- ticket pipeline (later phase)
+// --------------------------------------------------- ticket pipeline
 
 /** GET /api/stats */
 export function fetchStats(): Promise<StatsResponse> {
@@ -199,30 +205,85 @@ export function fetchStats(): Promise<StatsResponse> {
 export interface TicketListParams {
   status?: TicketFilterValue
   page?: number
+  page_size?: number
+  /** Server-side search over customer email and subject. */
+  q?: string
 }
 
-/** GET /api/tickets?status=&page= */
-export async function fetchTickets(params: TicketListParams = {}): Promise<Ticket[]> {
+/** GET /api/tickets?status=&page=&page_size=&q= — paginated on the server. */
+export async function fetchTickets(params: TicketListParams = {}): Promise<TicketListEnvelope> {
   const search = new URLSearchParams()
   if (params.status && params.status !== "all") search.set("status", params.status)
   if (params.page !== undefined) search.set("page", String(params.page))
+  if (params.page_size !== undefined) search.set("page_size", String(params.page_size))
+  if (params.q !== undefined && params.q.trim() !== "") search.set("q", params.q.trim())
   const query = search.toString()
   const raw: unknown = await request<unknown>(`/api/tickets${query ? `?${query}` : ""}`)
   return normalizeTicketList(raw)
 }
 
 /** GET /api/tickets/{id} — the full message thread. */
-export async function fetchTicket(id: number | string): Promise<TicketDetail> {
-  const raw: unknown = await request<unknown>(`/api/tickets/${id}`)
+export async function fetchTicket(id: string): Promise<TicketDetail> {
+  const raw: unknown = await request<unknown>(`/api/tickets/${encodeURIComponent(id)}`)
   return normalizeTicketDetail(raw)
 }
 
 /** POST /api/tickets/{id}/reply — sends a human reply to the customer. */
-export function postReply(id: number | string, body: string): Promise<ReplyResponse> {
-  return request<ReplyResponse>(`/api/tickets/${id}/reply`, {
+export function postReply(id: string, body: string): Promise<ReplyResponse> {
+  return request<ReplyResponse>(`/api/tickets/${encodeURIComponent(id)}/reply`, {
     method: "POST",
     body: JSON.stringify({ body }),
   })
+}
+
+/** PATCH /api/tickets/{id}/draft — stores (or replaces) the operator draft. */
+export function patchDraft(id: string, body: string): Promise<DraftResponse> {
+  return request<DraftResponse>(`/api/tickets/${encodeURIComponent(id)}/draft`, {
+    method: "PATCH",
+    body: JSON.stringify({ body }),
+  })
+}
+
+/** POST /api/tickets/{id}/escalate | /resolve | /reopen */
+export function ticketAction(
+  action: "escalate" | "resolve" | "reopen",
+  id: string,
+): Promise<TicketActionResponse> {
+  return request<TicketActionResponse>(`/api/tickets/${encodeURIComponent(id)}/${action}`, {
+    method: "POST",
+  })
+}
+
+/** POST /api/tickets/{id}/assign — assigns the ticket to another user. */
+export function assignTicket(id: string, assignedTo: string | null): Promise<TicketActionResponse> {
+  return request<TicketActionResponse>(`/api/tickets/${encodeURIComponent(id)}/assign`, {
+    method: "POST",
+    body: JSON.stringify({ assigned_to: assignedTo }),
+  })
+}
+
+// ------------------------------------------------- knowledge base documents
+
+/** GET /api/documents */
+export async function fetchDocuments(): Promise<DocumentItem[]> {
+  const raw: unknown = await request<unknown>("/api/documents")
+  return normalizeDocumentList(raw)
+}
+
+/**
+ * POST /api/documents (admin) — multipart upload. The file field must be
+ * named exactly `file`; `replaceId` bumps an existing document's version.
+ */
+export function uploadDocument(file: File, replaceId?: string): Promise<DocumentItem> {
+  const form = new FormData()
+  form.append("file", file)
+  if (replaceId !== undefined) form.append("replace_id", replaceId)
+  return request<DocumentItem>("/api/documents", { method: "POST", body: form })
+}
+
+/** DELETE /api/documents/{id} (admin) — queues the document for deletion. */
+export function deleteDocument(id: string): Promise<DocumentItem> {
+  return request<DocumentItem>(`/api/documents/${encodeURIComponent(id)}`, { method: "DELETE" })
 }
 
 // ------------------------------------------------------------ normalizers
@@ -276,24 +337,47 @@ export function normalizeJob(raw: unknown): JobListItem {
   }
 }
 
-export function normalizeTicketList(raw: unknown): Ticket[] {
+export function normalizeTicketList(raw: unknown): TicketListEnvelope {
+  const data = asRecord(raw)
+  // Tolerate a bare array as well as the envelope.
   if (Array.isArray(raw)) {
-    return raw.map(normalizeTicket)
+    return {
+      items: raw.map(normalizeTicket),
+      total: raw.length,
+      page: 1,
+      page_size: raw.length,
+      pages: 1,
+    }
   }
-  // Tolerate enveloped responses like { items: [...] }.
-  const container = asRecord(raw)
-  const inner = asArray(container.items ?? container.tickets ?? container.results)
-  return inner.map(normalizeTicket)
+  const items = asArray(data.items ?? data.tickets ?? data.results)
+  return {
+    items: items.map(normalizeTicket),
+    total: typeof data.total === "number" ? data.total : items.length,
+    page: typeof data.page === "number" ? data.page : 1,
+    page_size: typeof data.page_size === "number" ? data.page_size : items.length,
+    pages: typeof data.pages === "number" ? data.pages : 1,
+  }
 }
 
 export function normalizeTicket(raw: unknown): Ticket {
   const data = asRecord(raw)
   return {
-    id: Number(data.id ?? 0),
+    id: String(data.id ?? ""),
     customer_email: String(data.customer_email ?? data.email ?? ""),
     subject: String(data.subject ?? "(no subject)"),
     status: toStatus(data.status),
+    created_at: String(data.created_at ?? ""),
     updated_at: String(data.updated_at ?? ""),
+  }
+}
+
+export function normalizeMessage(raw: unknown): TicketMessage {
+  const data = asRecord(raw)
+  return {
+    id: String(data.id ?? ""),
+    author: toAuthor(data.author ?? data.role ?? data.sender ?? data.direction),
+    body: String(data.body ?? data.content ?? ""),
+    created_at: String(data.created_at ?? ""),
   }
 }
 
@@ -308,13 +392,27 @@ export function normalizeTicketDetail(raw: unknown): TicketDetail {
   }
 }
 
-export function normalizeMessage(raw: unknown): TicketMessage {
+export function normalizeDocumentList(raw: unknown): DocumentItem[] {
+  if (Array.isArray(raw)) {
+    return raw.map(normalizeDocument)
+  }
+  const data = asRecord(raw)
+  return asArray(data.items ?? data.documents ?? data.results).map(normalizeDocument)
+}
+
+export function normalizeDocument(raw: unknown): DocumentItem {
   const data = asRecord(raw)
   return {
-    id: Number(data.id ?? 0),
-    author: toAuthor(data.author ?? data.role ?? data.sender ?? data.direction),
-    body: String(data.body ?? data.content ?? ""),
+    id: String(data.id ?? ""),
+    title: String(data.title ?? "(untitled)"),
+    object_key: String(data.object_key ?? ""),
+    mime_type: String(data.mime_type ?? ""),
+    size_bytes: Number(data.size_bytes ?? 0),
+    checksum: typeof data.checksum === "string" ? data.checksum : null,
+    version: Number(data.version ?? 1),
+    status: String(data.status ?? "unknown"),
     created_at: String(data.created_at ?? ""),
+    indexed_at: typeof data.indexed_at === "string" ? data.indexed_at : null,
   }
 }
 

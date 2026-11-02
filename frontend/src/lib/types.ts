@@ -5,27 +5,38 @@ export type TicketStatus = "auto_replied" | "handed_off" | "pending"
 /** Filter values used by the tickets list: the three statuses plus "all". */
 export type TicketFilterValue = TicketStatus | "all"
 
-/** GET /api/stats */
+/** GET /api/stats — note the backend never awards auto_replied (auto-send is off). */
 export interface StatsResponse {
   auto_replied: number
   handed_off: number
   pending: number
+  today_total: number
 }
 
-/** One ticket from GET /api/tickets */
+/** One ticket from GET /api/tickets. The id is a UUID string. */
 export interface Ticket {
-  id: number
+  id: string
   customer_email: string
   subject: string
-  status: TicketStatus
+  status: string
+  created_at: string
   updated_at: string
+}
+
+/** Envelope of GET /api/tickets — pagination happens on the server. */
+export interface TicketListEnvelope {
+  items: Ticket[]
+  total: number
+  page: number
+  page_size: number
+  pages: number
 }
 
 /** Who sent a message in the thread. */
 export type MessageAuthor = "customer" | "bot" | "human"
 
 export interface TicketMessage {
-  id: number
+  id: string
   author: MessageAuthor
   body: string
   created_at: string
@@ -39,12 +50,26 @@ export interface TicketDetail extends Ticket {
   reasoning?: string | null
 }
 
-/** POST /api/auth/login. The session itself lives in an HttpOnly cookie. */
-export type LoginResponse = Record<string, unknown> | null
+/** Reply and draft: the backend answers with the new thread message. */
+export type ReplyResponse = TicketMessage
+
+/** POST /api/tickets/{id}/escalate|resolve|reopen|assign */
+export interface TicketActionResponse {
+  id: string
+  status: string
+  assigned_to: string | null
+}
+
+/** PATCH /api/tickets/{id}/draft */
+export interface DraftResponse {
+  ticket_id: string
+  body: string
+  updated_at: string
+}
 
 export type UserRole = "admin" | "operator"
 
-/** GET /api/auth/me */
+/** GET /api/auth/me — the user object is NOT wrapped in {user}. */
 export interface UserSummary {
   id: string
   email: string
@@ -52,6 +77,7 @@ export interface UserSummary {
   role: UserRole
 }
 
+/** POST /api/auth/login — this response wraps the user in {user}. */
 export interface LoginSuccess {
   user: UserSummary
 }
@@ -80,7 +106,7 @@ export interface JobListResponse {
   total: number
 }
 
-/** GET /api/gmail/status */
+/** GET /api/gmail/status — admin only. */
 export interface GmailStatus {
   connected: boolean
   email: string | null
@@ -88,7 +114,7 @@ export interface GmailStatus {
   last_error: string | null
 }
 
-/** GET /api/health/ready */
+/** GET /health/ready */
 export interface ReadinessComponent {
   status: string
   detail: string | null
@@ -101,8 +127,21 @@ export interface ReadinessStatus {
   gmail: ReadinessComponent
 }
 
-/** POST /api/tickets/{id}/reply */
-export interface ReplyResponse {
-  ok?: boolean
-  message?: TicketMessage
+/** One row of GET /api/documents (knowledge base) */
+export interface DocumentItem {
+  id: string
+  title: string
+  object_key: string
+  mime_type: string
+  size_bytes: number
+  checksum: string | null
+  version: number
+  status: string
+  created_at: string
+  indexed_at: string | null
+}
+
+/** GET /api/documents */
+export interface DocumentListResponse {
+  items: DocumentItem[]
 }
