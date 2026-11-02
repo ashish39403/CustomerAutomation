@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg: #f4f4f5;
+  --surface: #ffffff;
+  --soft: #ececee;
+  --line: #e4e4e7;
+  --fg: #18181b;
+  --muted-fg: #71727a;
+  --accent: #4f46e5;
+  --accent-fg: #ffffff;
+  --accent-soft: #eef2ff;
+  --accent-text: #6366f1;
+}
+
+.dark {
+  --bg: #0e1013;
+  --surface: #16181d;
+  --soft: #22252c;
+  --line: #2a2d35;
+  --fg: #e6e7ea;
+  --muted-fg: #8f959e;
+  --accent: #6366f1;
+  --accent-fg: #ffffff;
+  --accent-soft: #1d1f3a;
+  --accent-text: #a5b4fc;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-soft: var(--soft);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted-fg: var(--muted-fg);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-text: var(--accent-text);
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    background-color: var(--bg);
+    color: var(--fg);
+    font-family:
+      ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+      "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection {
+    background-color: color-mix(in oklab, var(--accent) 25%, transparent);
+  }
+}
