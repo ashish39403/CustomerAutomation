@@ -1,4 +1,4 @@
-import { Button } from "./ui/Button"
+import { Button } from "@/components/ui/button"
 
 export interface PaginationProps {
   page: number
@@ -11,8 +11,8 @@ export function Pagination({ page, pageCount, onPageChange }: PaginationProps) {
     return null
   }
   return (
-    <div className="flex items-center justify-between px-1 py-2">
-      <p className="text-xs text-muted-fg tabular-nums">
+    <div className="flex items-center justify-between px-3 py-2">
+      <p className="text-xs text-muted-foreground tabular-nums">
         Page {page} of {pageCount}
       </p>
       <div className="flex gap-1.5">

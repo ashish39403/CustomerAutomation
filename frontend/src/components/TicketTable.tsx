@@ -1,14 +1,17 @@
-import { StatusBadge } from "./ui/StatusBadge"
-import { EmptyState, ErrorState } from "./ui/States"
-import { formatDate } from "../lib/format"
-import type { Ticket } from "../lib/types"
-import { cn } from "../lib/cn"
+import { StatusBadge } from "./status-badge"
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
+import { Skeleton } from "@/components/ui/skeleton"
+import { formatDate } from "@/lib/format"
+import type { Ticket } from "@/lib/types"
+import { apiErrorMessage, isNotImplemented } from "@/lib/api"
+import { UnavailableState } from "./states"
+import { cn } from "cn"
 
 export interface TicketTableProps {
   tickets: Ticket[]
-  loading?: boolean
-  error?: string | null
-  onRetry?: () => void
+  loading: boolean
+  error: unknown
+  onRetry: () => void
   onOpen: (ticket: Ticket) => void
   emptyTitle?: string
   emptyHint?: string
@@ -20,27 +23,41 @@ const GRID =
 
 export function TicketTable({
   tickets,
-  loading = false,
-  error = null,
+  loading,
+  error,
   onRetry,
   onOpen,
   emptyTitle = "No tickets",
   emptyHint,
   className,
 }: TicketTableProps) {
-  if (error) {
-    return <ErrorState message={error} onRetry={onRetry} className={className} />
+  if (error !== null && error !== undefined) {
+    if (isNotImplemented(error)) {
+      return <UnavailableState endpoint="GET /api/tickets" phase="ticket pipeline" className={className} />
+    }
+    return (
+      <div className="p-4">
+        <p className="text-sm text-muted-foreground">{apiErrorMessage(error)}</p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-2 text-xs font-medium text-primary underline-offset-4 hover:underline"
+        >
+          Retry
+        </button>
+      </div>
+    )
   }
 
   if (loading) {
     return (
-      <div className={cn("flex flex-col", className)} aria-busy="true">
-        {Array.from({ length: 6 }, (_, index) => (
-          <div key={index} className={cn(GRID, "border-b border-line px-3 py-2.5")}>
-            <div className="h-4 w-3/5 animate-pulse rounded bg-soft" />
-            <div className="h-3.5 w-2/5 animate-pulse rounded bg-soft" />
-            <div className="h-4 w-20 animate-pulse rounded-full bg-soft" />
-            <div className="h-3.5 w-24 animate-pulse rounded bg-soft" />
+      <div className={cn("flex flex-col gap-2 p-3", className)} aria-busy="true">
+        {Array.from({ length: 5 }, (_, index) => (
+          <div key={index} className={cn(GRID)}>
+            <Skeleton className="h-4 w-3/5" />
+            <Skeleton className="h-3.5 w-2/5" />
+            <Skeleton className="h-4 w-20 rounded-full" />
+            <Skeleton className="h-3.5 w-24" />
           </div>
         ))}
       </div>
@@ -49,20 +66,21 @@ export function TicketTable({
 
   if (tickets.length === 0) {
     return (
-      <EmptyState
-        title={emptyTitle}
-        hint={emptyHint}
-        className={className}
-      />
+      <Empty className={cn("py-12", className)}>
+        <EmptyHeader>
+          <EmptyTitle>{emptyTitle}</EmptyTitle>
+          {emptyHint && <EmptyDescription>{emptyHint}</EmptyDescription>}
+        </EmptyHeader>
+      </Empty>
     )
   }
 
   return (
-    <div className={cn("flex flex-col", className)}>
+    <div className={cn("flex flex-col divide-y", className)}>
       <div
         className={cn(
           GRID,
-          "hidden border-b border-line px-3 pb-2 text-[11px] font-medium uppercase tracking-wide text-muted-fg sm:grid",
+          "hidden px-3 pb-2 pt-3 text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:grid",
         )}
       >
         <span>Subject</span>
@@ -77,15 +95,15 @@ export function TicketTable({
           onClick={() => onOpen(ticket)}
           className={cn(
             GRID,
-            "border-b border-line px-3 py-2.5 text-left transition-colors last:border-0 hover:bg-soft/60 focus-visible:bg-soft focus-visible:outline-none",
+            "px-3 py-2.5 text-left transition-colors hover:bg-accent/60 focus-visible:bg-accent focus-visible:outline-none",
           )}
         >
           <span className="truncate text-sm font-medium">{ticket.subject}</span>
-          <span className="truncate text-xs text-muted-fg">{ticket.customer_email}</span>
+          <span className="truncate text-xs text-muted-foreground">{ticket.customer_email}</span>
           <span className="justify-self-start sm:justify-self-auto">
             <StatusBadge status={ticket.status} />
           </span>
-          <span className="text-xs text-muted-fg tabular-nums sm:text-right">
+          <span className="text-xs text-muted-foreground tabular-nums sm:text-right">
             {formatDate(ticket.updated_at)}
           </span>
         </button>

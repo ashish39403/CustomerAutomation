@@ -9,9 +9,9 @@ import {
   type ReactNode,
 } from "react"
 import { Navigate } from "react-router-dom"
-import { apiLogout, fetchMe, login as loginApi, setUnauthorizedHandler } from "./api"
+import { fetchMe, apiLogout, login as loginApi, setUnauthorizedHandler } from "./api"
 import type { UserSummary } from "./types"
-import { Spinner } from "../components/ui/Spinner"
+import { Spinner } from "@/components/ui/spinner"
 
 export type AuthStatus = "checking" | "authed" | "guest"
 

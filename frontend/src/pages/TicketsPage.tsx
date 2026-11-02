@@ -1,22 +1,24 @@
 import { useQuery } from "@tanstack/react-query"
 import { useMemo } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
-import { Pagination } from "../components/Pagination"
-import { TicketTable } from "../components/TicketTable"
-import { Input } from "../components/ui/Input"
-import { SearchIcon } from "../components/ui/icons"
-import { REFRESH_MS } from "../lib/constants"
-import { cn } from "../lib/cn"
-import { fetchTickets } from "../lib/api"
-import { useDebouncedValue } from "../lib/hooks"
+import { Search } from "lucide-react"
+import { Pagination } from "@/components/Pagination"
+import { TicketTable } from "@/components/TicketTable"
+import { Input } from "@/components/ui/input"
+import { Card } from "@/components/ui/card"
+import { isNotImplemented } from "@/lib/api"
+import { REFRESH_MS } from "@/lib/constants"
+import { cn } from "cn"
+import { fetchTickets } from "@/lib/api"
+import { useDebouncedValue } from "@/lib/hooks"
 import {
   TICKET_FILTER_VALUES,
   filterTickets,
   pageCount,
   paginate,
   sortByUpdatedDesc,
-} from "../lib/tickets"
-import type { TicketFilterValue } from "../lib/types"
+} from "@/lib/tickets"
+import type { TicketFilterValue } from "@/lib/types"
 
 const FILTER_LABELS: Record<TicketFilterValue, string> = {
   all: "All",
@@ -46,6 +48,7 @@ export function TicketsPage() {
     queryKey: ["tickets", status],
     queryFn: () => fetchTickets(status === "all" ? {} : { status }),
     refetchInterval: REFRESH_MS,
+    retry: (failureCount, error) => !isNotImplemented(error) && failureCount < 1,
   })
 
   const filtered = useMemo(() => {
@@ -55,10 +58,7 @@ export function TicketsPage() {
 
   const total = pageCount(filtered.length)
   const currentPage = Math.min(page, total)
-  const paged = useMemo(
-    () => paginate(filtered, currentPage),
-    [filtered, currentPage],
-  )
+  const paged = useMemo(() => paginate(filtered, currentPage), [filtered, currentPage])
 
   function updateParams(update: { status?: TicketFilterValue; q?: string; page?: number }) {
     const next = new URLSearchParams(searchParams)
@@ -89,20 +89,20 @@ export function TicketsPage() {
   }
 
   const data = ticketsQuery.data ?? []
-  const isStaleLoading = ticketsQuery.isPending && ticketsQuery.fetchStatus !== "idle"
+  const loading = ticketsQuery.isPending && ticketsQuery.fetchStatus !== "idle"
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="text-sm font-semibold">Tickets</h2>
-        <div className="flex items-center gap-2">
-          <div className="relative w-full sm:w-64">
-            <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-fg" />
+        <h1 className="text-sm font-semibold">Tickets</h1>
+        <div className="w-full sm:w-64">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
               type="search"
               value={search}
               placeholder="Search email or subject…"
-              className="pl-8"
+              className="h-8 pl-8"
               onChange={(event) => updateParams({ q: event.target.value })}
             />
           </div>
@@ -111,7 +111,7 @@ export function TicketsPage() {
 
       <div
         aria-label="Filter by status"
-        className="flex gap-1 overflow-x-auto rounded-lg border border-line bg-surface p-1"
+        className="flex gap-1 overflow-x-auto rounded-lg border bg-card p-1"
       >
         {TICKET_FILTER_VALUES.map((value) => (
           <button
@@ -122,8 +122,8 @@ export function TicketsPage() {
             className={cn(
               "whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
               status === value
-                ? "bg-accent text-accent-fg"
-                : "text-muted-fg hover:bg-soft hover:text-fg",
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground",
             )}
           >
             {FILTER_LABELS[value]}
@@ -131,37 +131,31 @@ export function TicketsPage() {
         ))}
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-line bg-surface">
+      <Card className="overflow-hidden py-0">
         <TicketTable
           tickets={paged}
-          loading={isStaleLoading}
-          error={
-            ticketsQuery.isError && data.length === 0
-              ? ticketsQuery.error instanceof Error
-                ? ticketsQuery.error.message
-                : "Failed to load tickets"
-              : null
-          }
+          loading={loading}
+          error={data.length === 0 ? (ticketsQuery.error ?? null) : null}
           onRetry={() => void ticketsQuery.refetch()}
           onOpen={(ticket) => navigate(`/tickets/${ticket.id}`)}
-          emptyTitle={
-            data.length === 0 ? "No tickets yet" : "No tickets match"
-          }
+          emptyTitle={data.length === 0 ? "No tickets yet" : "No tickets match"}
           emptyHint={
             data.length === 0
-              ? "New customer emails will show up here automatically."
+              ? "Customer conversations appear here once the Gmail poller runs."
               : "Try a different status or search term."
           }
         />
-        <Pagination
-          page={currentPage}
-          pageCount={total}
-          onPageChange={(next) => updateParams({ page: next })}
-        />
-      </div>
+        <div className="border-t">
+          <Pagination
+            page={currentPage}
+            pageCount={total}
+            onPageChange={(next) => updateParams({ page: next })}
+          />
+        </div>
+      </Card>
 
-      {!isStaleLoading && !ticketsQuery.isError && (
-        <p className="px-1 text-[11px] text-muted-fg">
+      {!loading && !ticketsQuery.isError && (
+        <p className="px-1 text-[11px] text-muted-foreground">
           {filtered.length} ticket{filtered.length === 1 ? "" : "s"}
           {search !== "" || status !== "all" ? ` · ${data.length} total` : ""}
         </p>

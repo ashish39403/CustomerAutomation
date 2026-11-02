@@ -1,8 +1,9 @@
 from contextlib import asynccontextmanager
 
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.api.routes import auth as auth_routes
@@ -20,6 +21,25 @@ from app.modules.gmail.oauth import seed_from_env as seed_gmail
 from app.modules.knowledge_base.service import seed_knowledge_docs
 
 log = structlog.get_logger("app")
+
+# The only /api routes reachable without a session cookie (CONTRACT.md).
+PUBLIC_API_PATHS = {"/api/auth/login", "/api/v1/auth/login"}
+
+
+async def _require_session(request: Request, call_next):
+    """Every /api/* route except login needs a valid session cookie."""
+    path = request.url.path
+    if (
+        request.method != "OPTIONS"
+        and path.startswith("/api/")
+        and path not in PUBLIC_API_PATHS
+        and not request.session.get("user_id")
+    ):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Not authenticated", "code": "unauthorized"},
+        )
+    return await call_next(request)
 
 
 @asynccontextmanager
@@ -40,6 +60,9 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    # Order matters: CORS (outermost) -> session -> auth check -> routes, so
+    # the auth check can read the session and still emit CORS headers.
+    application.middleware("http")(_require_session)
     application.add_middleware(
         SessionMiddleware,
         secret_key=settings.app_secret_key,

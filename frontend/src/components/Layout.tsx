@@ -1,23 +1,22 @@
 import type { ReactNode } from "react"
 import { NavLink } from "react-router-dom"
-import { useAuth } from "../lib/auth"
-import { cn } from "../lib/cn"
-import { useTheme } from "../lib/theme"
-import { Button } from "./ui/Button"
-import { ChatIcon, MoonIcon, SunIcon } from "./ui/icons"
+import { LogOut, MessageSquare, Moon, Sun } from "lucide-react"
+import { useAuth } from "@/lib/auth"
+import { useTheme } from "@/lib/theme"
+import { cn } from "cn"
+import { Button } from "@/components/ui/button"
 
 function ThemeToggle() {
   const { theme, setTheme } = useTheme()
   return (
     <Button
       variant="ghost"
-      size="sm"
-      className="size-8 p-0 hidden sm:inline-flex"
+      size="icon-sm"
       onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
       title="Toggle dark mode"
       aria-label="Toggle dark mode"
     >
-      {theme === "dark" ? <SunIcon /> : <MoonIcon />}
+      {theme === "dark" ? <Sun /> : <Moon />}
     </Button>
   )
 }
@@ -28,11 +27,11 @@ function UserChip() {
     return null
   }
   return (
-    <span className="hidden items-center gap-1.5 border-r border-line pr-2 lg:flex">
-      <span className="max-w-44 truncate text-xs text-muted-fg" title={user.email}>
+    <span className="hidden items-center gap-1.5 border-r pr-2.5 lg:flex">
+      <span className="max-w-44 truncate text-xs text-muted-foreground" title={user.email}>
         {user.display_name !== "" ? user.display_name : user.email}
       </span>
-      <span className="rounded-full bg-soft px-2 py-0.5 text-[11px] font-medium text-muted-fg">
+      <span className="rounded-full bg-secondary px-2 py-0.5 text-[11px] font-medium text-secondary-foreground">
         {user.role}
       </span>
     </span>
@@ -44,22 +43,22 @@ export function Layout({ children }: { children: ReactNode }) {
 
   const linkClass = ({ isActive }: { isActive: boolean }) =>
     cn(
-      "rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors whitespace-nowrap",
-      isActive ? "bg-soft text-fg" : "text-muted-fg hover:text-fg",
+      "rounded-md px-2.5 py-1.5 text-sm font-medium whitespace-nowrap transition-colors",
+      isActive ? "bg-secondary text-secondary-foreground" : "text-muted-foreground hover:text-foreground",
     )
 
   return (
     <div className="min-h-svh">
-      <header className="border-b border-line bg-surface">
+      <header className="border-b bg-card">
         <div className="mx-auto flex max-w-5xl flex-col gap-2 px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-6">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <span className="grid size-7 shrink-0 place-items-center rounded-md bg-accent text-accent-fg">
-                <ChatIcon className="size-4" />
+              <span className="grid size-7 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground">
+                <MessageSquare className="size-4" />
               </span>
               <div className="flex flex-col leading-tight">
                 <span className="text-sm font-semibold">Support Admin</span>
-                <span className="hidden text-[11px] text-muted-fg sm:block">
+                <span className="hidden text-[11px] text-muted-foreground sm:block">
                   Harbor &amp; Pine customer support
                 </span>
               </div>
@@ -67,6 +66,7 @@ export function Layout({ children }: { children: ReactNode }) {
             <div className="flex items-center gap-1.5 sm:hidden">
               <ThemeToggle />
               <Button variant="outline" size="sm" onClick={logout}>
+                <LogOut />
                 Log out
               </Button>
             </div>
@@ -84,6 +84,7 @@ export function Layout({ children }: { children: ReactNode }) {
               <UserChip />
               <ThemeToggle />
               <Button variant="outline" size="sm" onClick={logout}>
+                <LogOut />
                 Log out
               </Button>
             </div>

@@ -20,13 +20,10 @@ import type {
  * The session lives in an HttpOnly cookie set by the API (`ca_session`), so
  * nothing secret is stored or bundled: the only public value is VITE_API_URL.
  *
- * The backend serves everything under /api/v1. The ticket pipeline endpoints
- * (stats / tickets / reply) are part of the dashboard contract and come online
- * with a later backend phase; until then they answer 404 and the pages render
- * a friendly "not available yet" state.
+ * Paths are exactly the ones in CONTRACT.md: `/api/*` for the API and the
+ * root-level `/health*` probes. Every endpoint here must match the contract —
+ * if code and contract disagree, the contract wins.
  */
-
-const API_PREFIX = "/api/v1"
 
 export class ApiError extends Error {
   readonly status: number
@@ -64,7 +61,7 @@ async function request<T>(
 ): Promise<T> {
   let response: Response
   try {
-    response = await fetch(`${apiBaseUrl()}${API_PREFIX}${path}`, {
+    response = await fetch(`${apiBaseUrl()}${path}`, {
       ...init,
       credentials: "include",
       headers: {
@@ -129,37 +126,45 @@ export function isNotImplemented(error: unknown): boolean {
 // ---------------------------------------------------------------- auth
 
 /**
- * POST /api/v1/auth/login. The identifier may be an email or a display name
+ * POST /api/auth/login. The identifier may be an email or a display name
  * (the backend accepts either). Succeeds with a session cookie on any 2xx.
  */
 export function login(identifier: string, password: string): Promise<LoginSuccess> {
   return request<LoginSuccess>(
-    "/auth/login",
+    "/api/auth/login",
     { method: "POST", body: JSON.stringify({ email: identifier, password }) },
     { isLogin: true },
   )
 }
 
-/** POST /api/v1/auth/logout — clears the server session. */
+/** POST /api/auth/logout — clears the server session. */
 export function apiLogout(): Promise<void> {
-  return request<void>("/auth/logout", { method: "POST" })
+  return request<void>("/api/auth/logout", { method: "POST" })
 }
 
-/** GET /api/v1/auth/me */
+/** GET /api/auth/me */
 export function fetchMe(): Promise<UserSummary> {
-  return request<UserSummary>("/auth/me")
+  return request<UserSummary>("/api/auth/me")
 }
 
 // ------------------------------------------------------------- operations
 
-/** GET /api/v1/health/ready */
+/** GET /health/ready (root, public) */
 export function fetchReadiness(): Promise<ReadinessStatus> {
   return request<ReadinessStatus>("/health/ready")
 }
 
-/** GET /api/v1/gmail/status */
+/** GET /api/gmail/status */
 export function fetchGmailStatus(): Promise<GmailStatus> {
-  return request<GmailStatus>("/gmail/status")
+  return request<GmailStatus>("/api/gmail/status")
+}
+
+/**
+ * URL of GET /api/gmail/connect — a server-side OAuth redirect, navigated
+ * as a full-page load so the browser carries the session cookie.
+ */
+export function gmailConnectUrl(): string {
+  return `${apiBaseUrl()}/api/gmail/connect`
 }
 
 export interface JobListParams {
@@ -168,27 +173,27 @@ export interface JobListParams {
   offset?: number
 }
 
-/** GET /api/v1/jobs?status=&limit=&offset= */
+/** GET /api/jobs?status=&limit=&offset= */
 export async function fetchJobs(params: JobListParams = {}): Promise<JobListResponse> {
   const search = new URLSearchParams()
   if (params.status !== undefined) search.set("status", params.status)
   if (params.limit !== undefined) search.set("limit", String(params.limit))
   if (params.offset !== undefined) search.set("offset", String(params.offset))
   const query = search.toString()
-  const raw: unknown = await request<unknown>(`/jobs${query ? `?${query}` : ""}`)
+  const raw: unknown = await request<unknown>(`/api/jobs${query ? `?${query}` : ""}`)
   return normalizeJobList(raw)
 }
 
-/** POST /api/v1/jobs/{id}/retry (admin only) */
+/** POST /api/jobs/{id}/retry (admin only) */
 export function retryJob(id: string): Promise<JobListItem> {
-  return request<JobListItem>(`/jobs/${id}/retry`, { method: "POST" })
+  return request<JobListItem>(`/api/jobs/${id}/retry`, { method: "POST" })
 }
 
 // -------------------------------------------- ticket pipeline (later phase)
 
-/** GET /api/v1/stats */
+/** GET /api/stats */
 export function fetchStats(): Promise<StatsResponse> {
-  return request<StatsResponse>("/stats")
+  return request<StatsResponse>("/api/stats")
 }
 
 export interface TicketListParams {
@@ -196,25 +201,25 @@ export interface TicketListParams {
   page?: number
 }
 
-/** GET /api/v1/tickets?status=&page= */
+/** GET /api/tickets?status=&page= */
 export async function fetchTickets(params: TicketListParams = {}): Promise<Ticket[]> {
   const search = new URLSearchParams()
   if (params.status && params.status !== "all") search.set("status", params.status)
   if (params.page !== undefined) search.set("page", String(params.page))
   const query = search.toString()
-  const raw: unknown = await request<unknown>(`/tickets${query ? `?${query}` : ""}`)
+  const raw: unknown = await request<unknown>(`/api/tickets${query ? `?${query}` : ""}`)
   return normalizeTicketList(raw)
 }
 
-/** GET /api/v1/tickets/{id} — the full message thread. */
+/** GET /api/tickets/{id} — the full message thread. */
 export async function fetchTicket(id: number | string): Promise<TicketDetail> {
-  const raw: unknown = await request<unknown>(`/tickets/${id}`)
+  const raw: unknown = await request<unknown>(`/api/tickets/${id}`)
   return normalizeTicketDetail(raw)
 }
 
-/** POST /api/v1/tickets/{id}/reply — sends a human reply to the customer. */
+/** POST /api/tickets/{id}/reply — sends a human reply to the customer. */
 export function postReply(id: number | string, body: string): Promise<ReplyResponse> {
-  return request<ReplyResponse>(`/tickets/${id}/reply`, {
+  return request<ReplyResponse>(`/api/tickets/${id}/reply`, {
     method: "POST",
     body: JSON.stringify({ body }),
   })

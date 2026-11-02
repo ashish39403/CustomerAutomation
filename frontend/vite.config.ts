@@ -14,10 +14,12 @@ export default defineConfig({
   },
   server: {
     // Same-origin proxy so the session cookie works in dev without CORS.
-    // `fastapi dev` listens on 127.0.0.1 only, hence the IP (not localhost).
+    // The backend listens on 127.0.0.1 only, hence the IP (not localhost).
+    // Port 8010 (not the default 8000): port 8000 is occupied on this machine
+    // by an unrelated local service that answers with 401s.
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8000",
+        target: "http://127.0.0.1:8010",
         changeOrigin: true,
       },
     },

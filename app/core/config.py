@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     aws_region: str | None = None
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None
-    neon_storage_bucket: str | None = None
+    neon_storage_bucket: str | None = "knowledgebase"
 
     google_client_id: str | None = None
     google_client_secret: str | None = None
@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     @classmethod
     def strip_strings(cls, value: object) -> object:
         if isinstance(value, str):
-            return value.strip()
+            return value.strip().strip('"').strip("'")
         return value
 
     @property

@@ -39,12 +39,12 @@ export interface TicketDetail extends Ticket {
   reasoning?: string | null
 }
 
-/** POST /api/v1/auth/login. The session itself lives in an HttpOnly cookie. */
+/** POST /api/auth/login. The session itself lives in an HttpOnly cookie. */
 export type LoginResponse = Record<string, unknown> | null
 
 export type UserRole = "admin" | "operator"
 
-/** GET /api/v1/auth/me */
+/** GET /api/auth/me */
 export interface UserSummary {
   id: string
   email: string
@@ -56,7 +56,7 @@ export interface LoginSuccess {
   user: UserSummary
 }
 
-/** One row of GET /api/v1/jobs */
+/** One row of GET /api/jobs */
 export type JobStatus = "queued" | "running" | "succeeded" | "retry_wait" | "dead"
 
 export interface JobListItem {
@@ -74,13 +74,13 @@ export interface JobListItem {
   updated_at: string
 }
 
-/** GET /api/v1/jobs */
+/** GET /api/jobs */
 export interface JobListResponse {
   items: JobListItem[]
   total: number
 }
 
-/** GET /api/v1/gmail/status */
+/** GET /api/gmail/status */
 export interface GmailStatus {
   connected: boolean
   email: string | null
@@ -88,7 +88,7 @@ export interface GmailStatus {
   last_error: string | null
 }
 
-/** GET /api/v1/health/ready */
+/** GET /api/health/ready */
 export interface ReadinessComponent {
   status: string
   detail: string | null

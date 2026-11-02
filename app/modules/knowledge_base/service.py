@@ -43,7 +43,7 @@ def upload_document(
     if replace_id and document is None:
         raise NotFoundError("Document not found")
     object_key = document.object_key if document else f"kb/{uuid.uuid4().hex}/{Path(filename).name}"
-    put_bytes(object_key, data)
+    put_bytes(object_key, data, content_type=content_type)
     if document is None:
         document = Document(
             title=Path(filename).stem,
@@ -98,6 +98,7 @@ def seed_knowledge_docs(db: Session) -> int:
         data = path.read_bytes()
         checksum = hashlib.sha256(data).hexdigest()
         object_key = f"kb/seed/{path.name}"
+        put_bytes(object_key, data, content_type="text/markdown")
         existing = db.scalar(select(Document).where(Document.object_key == object_key))
         if existing and existing.checksum == checksum and existing.status in {
             DocumentStatus.INDEXED.value,
@@ -105,7 +106,6 @@ def seed_knowledge_docs(db: Session) -> int:
             DocumentStatus.PROCESSING.value,
         }:
             continue
-        put_bytes(object_key, data)
         if existing is None:
             existing = Document(
                 title=path.stem,

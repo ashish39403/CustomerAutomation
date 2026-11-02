@@ -4,16 +4,73 @@ Contract: `CONTRACT.md` (source of truth). Rules: phase by phase, one commit per
 phase (`phase N: <name>`), contract wins over either side, no hard-coded URLs or
 secrets (backend `.env`, frontend `VITE_API_URL`).
 
+**Environment note:** the backend and frontend agents were editing this same
+working tree while the integration ran (backend `app/`, frontend `frontend/src/`).
+Every phase below therefore re-reads both sides right before touching them, and
+fixes whatever disagrees with `CONTRACT.md`.
+
 ---
 
 ## Phase 0 — Contract and boot
 
 **What changed**
-- Wrote `CONTRACT.md` (endpoints, bodies, status codes, auth rules, status vocabulary).
-- No code changes yet; this phase only boots both apps and verifies them.
+- Wrote `CONTRACT.md`: the 7 pinned endpoints plus the auxiliary routes, snake_case
+  bodies, status vocabulary (`pending` / `auto_replied` / `handed_off`), cookie rules.
+- `app/main.py`: mounted the health router at the **root** (`GET /health`), which is
+  what the contract pins (it used to be reachable only at `/api/v1/health`).
+- `.gitignore`: added `node_modules/` before the first commit.
 
 **Tested**
-- (recorded below)
+- `curl http://127.0.0.1:8000/health` → `200 {"status":"ok"}`.
+- Dashboard dev server serves the login page: `GET http://localhost:5173/` → 200,
+  `/src/main.tsx` and `/src/pages/LoginPage.tsx` compile through Vite → 200.
+- `npm run typecheck` → clean (after removing an unused `LoginResponse` import that
+  was failing `tsc -b`).
+- Backend `uv run pytest` → 24 passed, 1 failed (see open issues).
 
 **Failed / fixes**
-- (recorded below)
+- *Duplicate dev server:* a Vite server was already bound to `5173`; `npm run dev`
+  fell back to `5174`. Killed the duplicate so the contract port `5173` stays canonical.
+- *Unused import* `LoginResponse` in `frontend/src/lib/api.ts` broke `tsc -b` → removed.
+- *Unit tests red (5):* `api.test.ts` expected `/api/...` while `api.ts` called
+  `/api/v1/...`. This is the Phase-1 prefix deviation, fixed there (contract wins).
+- **No browser available in this environment** — "no console errors" was verified by
+  Vite successfully transforming `main.tsx` + `LoginPage.tsx` and by a clean `tsc -b`,
+  not by a real browser session.
+
+---
+
+## Phase 1 — CORS and auth
+
+**What changed**
+- Backend `app/main.py`: added a `_require_session` middleware — every `/api/*`
+  path except `POST /api/auth/login` (and its `/api/v1` alias) answers
+  `401 {"detail":"Not authenticated","code":"unauthorized"}` without a session.
+  Middleware order is CORS → session → auth check, so CORS headers still apply to 401s.
+- CORS already reads `CORS_ORIGINS` from `.env` with `allow_credentials=True`.
+- Login already reads `DASHBOARD_USERNAME`/`DASHBOARD_PASSWORD` (`EMAIL`/`PASSWORD`
+  fallbacks) from `.env`, seeds them at startup and returns the `ca_session` cookie
+  (HttpOnly, SameSite=Lax, Secure in production).
+- Frontend `frontend/src/lib/api.ts`: dropped the internal `/api/v1` prefix — every
+  path now matches the contract exactly (`/api/auth/login`, `/api/auth/me`,
+  `/api/auth/logout`, `/api/stats`, `/api/tickets…`, `/api/jobs…`, `/api/gmail/status`,
+  root `/health/ready`). Doc comments, `types.ts` comments, `api.test.ts` expectations
+  and the `UnavailableState` endpoint labels were updated to the same paths.
+
+**Tested**
+- Wrong password → `401 {"detail":"Invalid credentials","code":"unauthorized"}`.
+- Correct password → `200` + `set-cookie: ca_session=…; path=/; Max-Age=604800; httponly; samesite=lax`.
+- `GET /api/stats` with no cookie → `401`.
+- Full browser path (through the Vite proxy on `5173`): login → `200` + cookie,
+  `/api/stats` with cookie → `200 {"auto_replied":0,"handed_off":0,"pending":3,"today_total":3}`,
+  without cookie → `401`.
+- CORS: `Origin: http://localhost:5173` → `access-control-allow-origin` echoed +
+  `allow-credentials: true`; `Origin: http://evil.example` → **no** ACAO header;
+  preflight `OPTIONS /api/auth/login` → allowed methods/headers.
+- `npm run typecheck` clean, `npm run test` → 24/24 passed.
+
+**Failed / fixes**
+- First login curl hit a reloading server (timeout) and PowerShell mangled the inline
+  JSON body (`422 json_invalid`) → re-ran with the body in a file (`-d @file`).
+
+---

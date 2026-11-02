@@ -1,7 +1,7 @@
-import { EmptyState } from "./ui/States"
-import { formatDate } from "../lib/format"
-import type { MessageAuthor, TicketMessage } from "../lib/types"
-import { cn } from "../lib/cn"
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
+import { formatDate } from "@/lib/format"
+import type { MessageAuthor, TicketMessage } from "@/lib/types"
+import { cn } from "cn"
 
 const AUTHOR_LABELS: Record<MessageAuthor, string> = {
   customer: "Customer",
@@ -12,22 +12,29 @@ const AUTHOR_LABELS: Record<MessageAuthor, string> = {
 function bubbleClasses(author: MessageAuthor): string {
   switch (author) {
     case "customer":
-      return "border-line bg-surface"
+      return "border-border bg-card"
     case "bot":
-      return "border-accent/20 bg-accent-soft"
+      return "border-primary/20 bg-primary/10 dark:border-primary/30"
     case "human":
-      return "ml-auto border-accent/30 bg-accent text-accent-fg"
+      return "ml-auto border-primary/30 bg-primary text-primary-foreground"
   }
 }
 
-export function MessageThread({ messages, className }: { messages: TicketMessage[]; className?: string }) {
+export function MessageThread({
+  messages,
+  className,
+}: {
+  messages: TicketMessage[]
+  className?: string
+}) {
   if (messages.length === 0) {
     return (
-      <EmptyState
-        title="No messages yet"
-        hint="This ticket does not have any messages."
-        className={className}
-      />
+      <Empty className={cn("py-12", className)}>
+        <EmptyHeader>
+          <EmptyTitle>No messages yet</EmptyTitle>
+          <EmptyDescription>This ticket does not have any messages.</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
     )
   }
 
@@ -56,7 +63,7 @@ export function MessageThread({ messages, className }: { messages: TicketMessage
             <p
               className={cn(
                 "mb-0.5 text-[11px] font-medium",
-                message.author === "human" ? "text-accent-fg/75" : "text-muted-fg",
+                message.author === "human" ? "text-primary-foreground/75" : "text-muted-foreground",
               )}
             >
               {AUTHOR_LABELS[message.author]} · {formatDate(message.created_at)}
