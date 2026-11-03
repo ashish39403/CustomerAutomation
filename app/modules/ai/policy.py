@@ -6,8 +6,6 @@ from app.core.config import settings
 from app.db.models.enums import Decision, TicketCategory
 from app.modules.ai.schemas import Classification
 
-AUTO_SEND_ENABLED = False
-
 ESCALATE_CATEGORIES = {
     TicketCategory.REFUND,
     TicketCategory.PAYMENT,
@@ -73,8 +71,10 @@ def decide(
         return Decision.INSUFFICIENT_EVIDENCE, "no supporting knowledge-base evidence"
     if not grounding_ok:
         return Decision.ESCALATE, "draft failed grounding checks"
-    if AUTO_SEND_ENABLED and settings.auto_send_enabled:
-        return Decision.NEEDS_REVIEW, "auto_send is hard-disabled in V1"
+    if classification.confidence < settings.auto_send_min_confidence:
+        return Decision.ESCALATE, "confidence too low for an automatic reply"
+    if settings.auto_send_enabled:
+        return Decision.AUTO_SEND, "grounded reply can be sent automatically"
     return Decision.NEEDS_REVIEW, "grounded draft ready for human approval"
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from langchain_core.prompts import ChatPromptTemplate
 
 from app.core.config import settings
-from app.modules.ai.llm import chat_model
+from app.modules.ai.llm import structured_model
 from app.modules.ai.schemas import Classification, DraftResult
 
 PROMPT = ChatPromptTemplate.from_messages(
@@ -34,7 +34,7 @@ def draft(
     email_text: str,
     evidence: list[dict],
 ) -> DraftResult:
-    model = chat_model(settings.agent_model, temperature=0.2).with_structured_output(DraftResult)
+    model = structured_model(DraftResult, settings.agent_model, temperature=0.2)
     chain = PROMPT | model
     blocks = []
     for item in evidence:

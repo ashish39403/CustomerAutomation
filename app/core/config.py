@@ -87,7 +87,8 @@ class Settings(BaseSettings):
     upload_dir: str = "data/uploads"
     max_upload_bytes: int = 10 * 1024 * 1024
     retrieval_k: int = 6
-    auto_send_enabled: bool = False
+    auto_send_enabled: bool = True
+    auto_send_min_confidence: float = 0.45
 
     @field_validator("*", mode="before")
     @classmethod

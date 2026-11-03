@@ -12,6 +12,7 @@ from qdrant_client.models import (
     Filter,
     FilterSelector,
     MatchValue,
+    PayloadSchemaType,
     PointStruct,
     VectorParams,
 )
@@ -33,12 +34,27 @@ def collection_name() -> str:
 def ensure_collection() -> None:
     qdrant = client()
     name = collection_name()
-    if qdrant.collection_exists(name):
-        return
-    qdrant.create_collection(
-        collection_name=name,
-        vectors_config=VectorParams(size=settings.qdrant_vector_size, distance=Distance.COSINE),
-    )
+    if not qdrant.collection_exists(name):
+        qdrant.create_collection(
+            collection_name=name,
+            vectors_config=VectorParams(size=settings.qdrant_vector_size, distance=Distance.COSINE),
+        )
+    ensure_payload_indexes()
+
+
+def ensure_payload_indexes() -> None:
+    """Qdrant Cloud rejects filtered search until these payload fields are indexed."""
+    qdrant = client()
+    name = collection_name()
+    existing = set((qdrant.get_collection(name).payload_schema or {}).keys())
+    specs = {
+        "active": PayloadSchemaType.BOOL,
+        "document_id": PayloadSchemaType.KEYWORD,
+    }
+    for field, schema in specs.items():
+        if field in existing:
+            continue
+        qdrant.create_payload_index(collection_name=name, field_name=field, field_schema=schema)
 
 
 def point_id(document_id: UUID, version: int, chunk_index: int) -> str:

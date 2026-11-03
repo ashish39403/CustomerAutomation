@@ -24,7 +24,7 @@ class Ticket(Base):
     __table_args__ = (
         CheckConstraint(
             "status IN ('new', 'processing', 'needs_review', 'approved', "
-            "'replied', 'escalated', 'resolved', 'failed')",
+            "'replied', 'auto_replied', 'escalated', 'resolved', 'failed')",
             name="ck_tickets_status",
         ),
         CheckConstraint(

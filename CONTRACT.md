@@ -129,11 +129,27 @@ param the dashboard uses).
       { "id": "<uuid>", "author": "human", "body": "Adding the tracking number.", "created_at": "2026-11-03T09:05:00+00:00" }
     ],
     "classification": "shipping",
-    "reasoning": "Customer asked about delivery date."
+    "reasoning": "Customer asked about delivery date.",
+    "draft_text": "It ships tomorrow.",
+    "risk_flags": [],
+    "sources": [
+      {
+        "id": "<chunk-or-point-id>",
+        "title": "Shipping policy",
+        "locator": "Delivery windows",
+        "excerpt": null
+      }
+    ],
+    "assigned_to": null
   }
   ```
   - `messages` is ordered oldest → newest. `author` is one of `customer`, `bot`, `human`.
   - `classification` and `reasoning` are `null` when the bot has not classified the ticket yet.
+  - Additive fields (always present, `null` when that data does not exist yet):
+    - `draft_text` — latest saved operator or AI draft. `null` when nothing has been drafted.
+    - `risk_flags` — string list from the latest AI run. `null` when no AI run exists. `[]` when a run exists with no flags.
+    - `sources` — citations for that run. Each item is `{id, title, locator, excerpt}`. `title`, `locator`, and `excerpt` are `null` when unknown. The list itself is `null` when no AI run exists.
+    - `assigned_to` — assignee user id, or `null` when unassigned.
 - 404 → `{"detail": "Ticket not found", "code": "not_found"}` for an unknown **or** malformed id.
 - 401 without a session.
 
@@ -158,11 +174,22 @@ thread, stored as an outbound `human` message, and the ticket status becomes
 - 401 without a session, 404 unknown ticket, 422 empty/missing `body`,
   502 `{"detail": "Could not send the reply", "code": "gmail_send_failed"}` when Gmail rejects the send.
 
-## Auxiliary endpoints (not part of the dashboard flow)
+## Auxiliary endpoints (operator dashboard)
+
+These are not part of the pinned seven routes. Shapes below are additive and stable for the dashboard.
 
 | Method | Path | Auth | Notes |
 | --- | --- | --- | --- |
-| GET | `/api/gmail/status` | session (admin) | `{connected, email, status, last_error}` |
+| PATCH | `/api/tickets/{id}/draft` | session | body `{body}`. Saves `draft_text` on the latest AI run, or creates a stub run when none exists yet. 409 when the ticket state cannot hold a draft. 200 → `{ticket_id, body, updated_at}` |
+| POST | `/api/tickets/{id}/escalate` | session | 200 → `{id, status, assigned_to}` with API status |
+| POST | `/api/tickets/{id}/resolve` | session | same response as escalate |
+| POST | `/api/tickets/{id}/reopen` | session | same response as escalate |
+| POST | `/api/tickets/{id}/assign` | session | body `{assigned_to}` (user id or `null`). 200 → `{id, status, assigned_to}`. Unknown user → 404 |
+| GET | `/api/tickets/{id}/audit` | session | `{items: [{id, actor_type, event_type, created_at}]}` newest first. 404 unknown ticket |
+| GET | `/api/documents` | session | `{items: [document]}` |
+| POST | `/api/documents` | session (admin) | multipart field `file` (pdf, txt, md). Optional `replace_id` |
+| DELETE | `/api/documents/{id}` | session (admin) | queues deletion |
+| GET | `/api/gmail/status` | session (admin) | `{connected, email, status, last_error}`. Operators receive 403 |
 | GET | `/api/gmail/connect` | session (admin) | redirects to Google OAuth |
 | GET | `/api/gmail/callback` | session | OAuth callback (`GOOGLE_REDIRECT_URI` in `.env`) |
 | GET | `/api/jobs` | session | `{items, total}` job list |

@@ -12,17 +12,21 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
 from app.core.errors import NotFoundError
-from app.db.models import AiRun, Message, Ticket, User
+from app.db.models import Message, Ticket, User
 from app.db.models.enums import MessageDirection, TicketStatus
 from app.db.session import get_db
 from app.modules.gmail.send import AUTHOR_HEADER
 from app.modules.tickets.service import (
     assign_ticket,
     escalate_ticket,
+    latest_run,
+    list_ticket_audit,
     reopen_ticket,
     reply_to_ticket,
     resolve_ticket,
+    risk_flags_for,
     save_draft,
+    sources_for,
 )
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
@@ -34,8 +38,8 @@ API_PENDING = {
     TicketStatus.NEEDS_REVIEW.value,
     TicketStatus.APPROVED.value,
 }
-# Auto-send is hard-disabled. Human dashboard send maps to handed_off.
-API_AUTO_REPLIED: set[str] = set()
+# Bot send uses auto_replied. A human send still maps to handed_off.
+API_AUTO_REPLIED = {TicketStatus.AUTO_REPLIED.value}
 API_HANDED_OFF = {
     TicketStatus.REPLIED.value,
     TicketStatus.ESCALATED.value,
@@ -88,6 +92,13 @@ class ThreadMessage(BaseModel):
     created_at: datetime
 
 
+class CitedSource(BaseModel):
+    id: str
+    title: str | None = None
+    locator: str | None = None
+    excerpt: str | None = None
+
+
 class TicketDetailResponse(BaseModel):
     id: UUID
     customer_email: str
@@ -98,6 +109,21 @@ class TicketDetailResponse(BaseModel):
     messages: list[ThreadMessage]
     classification: str | None
     reasoning: str | None
+    draft_text: str | None = None
+    risk_flags: list[str] | None = None
+    sources: list[CitedSource] | None = None
+    assigned_to: UUID | None = None
+
+
+class AuditEventItem(BaseModel):
+    id: UUID
+    actor_type: str
+    event_type: str
+    created_at: datetime
+
+
+class AuditListResponse(BaseModel):
+    items: list[AuditEventItem]
 
 
 class StatsResponse(BaseModel):
@@ -110,15 +136,12 @@ class StatsResponse(BaseModel):
 class ReplyRequest(BaseModel):
     body: str = Field(..., min_length=1, max_length=10000)
 
-    @field_validator("body")
+    @field_validator("body", mode="before")
     @classmethod
-    def strip_body(cls, value: str) -> str:
-        text = value.strip()
-        if not text:
-            raise ValueError("body must be non-empty")
-        if len(text) > 10000:
-            raise ValueError("body is too long")
-        return text
+    def strip_body(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
 
 
 class DraftRequest(ReplyRequest):
@@ -227,13 +250,13 @@ def get_ticket(
     messages = db.scalars(
         select(Message).where(Message.ticket_id == ticket.id).order_by(Message.created_at)
     ).all()
-    run = db.scalar(
-        select(AiRun).where(AiRun.ticket_id == ticket.id).order_by(AiRun.created_at.desc())
-    )
+    run = latest_run(db, ticket.id)
     classification = ticket.category
     reasoning = run.decision_reason if run else None
     if run and run.classification_json and not reasoning:
-        reasoning = run.classification_json.get("summary")
+        summary = run.classification_json.get("summary")
+        reasoning = summary if isinstance(summary, str) else None
+    draft = (run.draft_text or "").strip() if run and run.draft_text else None
     return TicketDetailResponse(
         id=ticket.id,
         customer_email=ticket.customer_email,
@@ -244,6 +267,32 @@ def get_ticket(
         messages=[_thread_message(row) for row in messages],
         classification=classification,
         reasoning=reasoning,
+        draft_text=draft or None,
+        risk_flags=risk_flags_for(run),
+        sources=[CitedSource.model_validate(item) for item in (sources_for(db, run) or [])]
+        if run is not None
+        else None,
+        assigned_to=ticket.assigned_to,
+    )
+
+
+@router.get("/{ticket_id}/audit", response_model=AuditListResponse)
+def get_audit(
+    ticket_id: str,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> AuditListResponse:
+    events = list_ticket_audit(db, _parse_ticket_id(ticket_id))
+    return AuditListResponse(
+        items=[
+            AuditEventItem(
+                id=event.id,
+                actor_type=event.actor_type,
+                event_type=event.event_type,
+                created_at=event.created_at,
+            )
+            for event in events
+        ]
     )
 
 

@@ -18,6 +18,18 @@ def chat_model(model: str | None = None, *, temperature: float = 0) -> ChatOpenA
     )
 
 
+def structured_model(schema: type, model: str, *, temperature: float = 0):
+    """Call a .env model and parse a schema.
+
+    The configured gateway rejects OpenAI json_schema mode. Tool calling works
+    for both CLASSIFIER_MODEL and AGENT_MODEL.
+    """
+    return chat_model(model, temperature=temperature).with_structured_output(
+        schema,
+        method="function_calling",
+    )
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0.5, max=8), reraise=True)
 def invoke(model: ChatOpenAI, prompt: str):
     return model.invoke(prompt)

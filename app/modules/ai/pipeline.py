@@ -6,6 +6,8 @@ from uuid import UUID
 import structlog
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.core.errors import AppError
 from app.db.models import AiRun, AuditEvent, Message, Ticket
 from app.db.models.enums import ActorType, Decision, TicketStatus
 from app.modules.ai.classifier import classify
@@ -14,6 +16,7 @@ from app.modules.ai.policy import decide, grounding_ok, overlay_risk_flags
 from app.modules.ai.schemas import Classification
 from app.modules.jobs.errors import PermanentJobError, TransientJobError
 from app.modules.knowledge_base.retrieve import retrieve
+from app.modules.tickets.service import send_automated_reply
 
 log = structlog.get_logger("ai")
 PIPELINE_VERSION = "v1"
@@ -71,7 +74,7 @@ def _run(db: Session, ticket: Ticket, message: Message, started: float) -> None:
     early_decision, early_reason = decide(
         classification, evidence_count=1, grounding_ok=True, skip_reply=skip_reply
     )
-    needs_answer = early_decision == Decision.NEEDS_REVIEW
+    needs_answer = early_decision in {Decision.NEEDS_REVIEW, Decision.AUTO_SEND}
 
     if needs_answer or early_decision in {Decision.ESCALATE, Decision.INSUFFICIENT_EVIDENCE}:
         try:
@@ -88,9 +91,9 @@ def _run(db: Session, ticket: Ticket, message: Message, started: float) -> None:
         )
         draft_text = draft_result.draft_text
         cited = draft_result.cited_chunk_ids
-        if draft_result.insufficient_evidence or not evidence:
+        if not evidence:
             grounded = False
-        grounded = grounded and grounding_ok(draft_text, evidence_text)
+        grounded = grounded and grounding_ok(draft_text or "", evidence_text)
 
     decision, reason = decide(
         classification,
@@ -98,20 +101,23 @@ def _run(db: Session, ticket: Ticket, message: Message, started: float) -> None:
         grounding_ok=grounded,
         skip_reply=skip_reply,
     )
-    if decision == Decision.INSUFFICIENT_EVIDENCE:
+    ticket.category = classification.category.value
+    ticket.priority = classification.priority.value
+    if decision == Decision.INSUFFICIENT_EVIDENCE or decision == Decision.ESCALATE:
         ticket.status = TicketStatus.ESCALATED.value
-        ticket.category = classification.category.value
-        ticket.priority = classification.priority.value
-    elif decision == Decision.ESCALATE:
-        ticket.status = TicketStatus.ESCALATED.value
-        ticket.category = classification.category.value
-        ticket.priority = classification.priority.value
     elif decision == Decision.NO_REPLY:
         ticket.status = TicketStatus.RESOLVED.value
+    elif decision == Decision.AUTO_SEND and (draft_text or "").strip():
+        try:
+            send_automated_reply(db, ticket.id, (draft_text or "").strip())
+        except AppError as exc:
+            ticket.status = TicketStatus.ESCALATED.value
+            reason = f"{reason}; auto-send failed, handed to a human"
+            log.warning("ai.auto_send_failed", ticket_id=str(ticket.id), error=str(exc))
+        else:
+            ticket.status = TicketStatus.AUTO_REPLIED.value
     else:
         ticket.status = TicketStatus.NEEDS_REVIEW.value
-        ticket.category = classification.category.value
-        ticket.priority = classification.priority.value
 
     _store_run(
         db,
@@ -152,7 +158,11 @@ def _store_run(
     run = AiRun(
         ticket_id=ticket.id,
         message_id=message.id,
-        model=None if classification is None else "classifier+agent",
+        model=(
+            None
+            if classification is None
+            else f"{settings.classifier_model}+{settings.agent_model}"
+        ),
         prompt_version=PROMPT_VERSION,
         pipeline_version=PIPELINE_VERSION,
         classification_json=classification.model_dump(mode="json") if classification else None,

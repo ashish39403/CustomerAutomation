@@ -100,11 +100,7 @@ def seed_knowledge_docs(db: Session) -> int:
         object_key = f"kb/seed/{path.name}"
         put_bytes(object_key, data, content_type="text/markdown")
         existing = db.scalar(select(Document).where(Document.object_key == object_key))
-        if existing and existing.checksum == checksum and existing.status in {
-            DocumentStatus.INDEXED.value,
-            DocumentStatus.QUEUED.value,
-            DocumentStatus.PROCESSING.value,
-        }:
+        if existing and existing.checksum == checksum and existing.status == DocumentStatus.INDEXED.value:
             continue
         if existing is None:
             existing = Document(

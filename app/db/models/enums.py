@@ -19,6 +19,7 @@ class TicketStatus(StrEnum):
     NEEDS_REVIEW = "needs_review"
     APPROVED = "approved"
     REPLIED = "replied"
+    AUTO_REPLIED = "auto_replied"
     ESCALATED = "escalated"
     RESOLVED = "resolved"
     FAILED = "failed"

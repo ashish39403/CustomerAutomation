@@ -12,6 +12,10 @@ wheels/
 # Node
 node_modules/
 
+# Operator UI is a separate checkout and is not part of this repo
+frontend/
+dashboard/
+
 # Secrets and local env
 .env
 .env.local

@@ -5,14 +5,25 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError, ConflictError, NotFoundError
-from app.db.models import AiRun, AuditEvent, GmailAccount, Message, SendAttempt, Ticket, User
+from app.db.models import (
+    AiRun,
+    AuditEvent,
+    Document,
+    DocumentChunk,
+    GmailAccount,
+    Message,
+    SendAttempt,
+    Ticket,
+    User,
+)
 from app.db.models.enums import (
     ActorType,
+    Decision,
     GmailAccountStatus,
     MessageDirection,
     SendAttemptStatus,
@@ -37,6 +48,7 @@ SENDABLE = {
     TicketStatus.ESCALATED.value,
     TicketStatus.FAILED.value,
     TicketStatus.REPLIED.value,
+    TicketStatus.AUTO_REPLIED.value,
     TicketStatus.RESOLVED.value,
 }
 ESCALATE_FROM = {
@@ -53,12 +65,14 @@ RESOLVE_FROM = {
     TicketStatus.APPROVED.value,
     TicketStatus.ESCALATED.value,
     TicketStatus.REPLIED.value,
+    TicketStatus.AUTO_REPLIED.value,
     TicketStatus.FAILED.value,
 }
 REOPEN_FROM = {
     TicketStatus.RESOLVED.value,
     TicketStatus.ESCALATED.value,
     TicketStatus.REPLIED.value,
+    TicketStatus.AUTO_REPLIED.value,
     TicketStatus.FAILED.value,
 }
 DRAFT_FROM = {
@@ -73,12 +87,24 @@ IN_FLIGHT = {SendAttemptStatus.PENDING.value, SendAttemptStatus.UNKNOWN.value}
 STALE_PENDING = timedelta(minutes=2)
 
 
-def reply_to_ticket(db: Session, ticket_id: UUID, body: str, actor: User) -> Message:
+def send_automated_reply(db: Session, ticket_id: UUID, body: str) -> Message:
+    """Send a grounded draft as the bot. A failure leaves the ticket unsent."""
+    return reply_to_ticket(db, ticket_id, body, actor=None, automated=True)
+
+
+def reply_to_ticket(
+    db: Session,
+    ticket_id: UUID,
+    body: str,
+    actor: User | None,
+    *,
+    automated: bool = False,
+) -> Message:
     ticket = _lock_ticket(db, ticket_id)
     _assert_sendable(ticket)
     account = _connected_account(db)
     inbound = _latest_inbound(db, ticket.id)
-    key = _idempotency_key(ticket.id, body)
+    key = _idempotency_key(ticket.id, body, automated=automated)
     attempt = db.scalar(select(SendAttempt).where(SendAttempt.idempotency_key == key))
     now = datetime.now(UTC)
 
@@ -100,7 +126,17 @@ def reply_to_ticket(db: Session, ticket_id: UUID, body: str, actor: User) -> Mes
             after=attempt.attempted_at or attempt.created_at,
         )
         if matched:
-            return _complete_sent(db, ticket, attempt, actor, body, account, inbound, matched)
+            return _complete_sent(
+                db,
+                ticket,
+                attempt,
+                actor,
+                body,
+                account,
+                inbound,
+                matched,
+                automated=automated,
+            )
         attempt.status = SendAttemptStatus.PENDING.value
 
     if attempt is None:
@@ -121,8 +157,8 @@ def reply_to_ticket(db: Session, ticket_id: UUID, body: str, actor: User) -> Mes
 
     db.add(
         AuditEvent(
-            actor_type=ActorType.USER.value,
-            actor_id=actor.id,
+            actor_type=ActorType.WORKER.value if automated else ActorType.USER.value,
+            actor_id=None if actor is None else actor.id,
             ticket_id=ticket.id,
             event_type="ticket.send_started",
             event_data_json={"send_attempt_id": str(attempt.id)},
@@ -154,7 +190,17 @@ def reply_to_ticket(db: Session, ticket_id: UUID, body: str, actor: User) -> Mes
         if matched:
             db.refresh(ticket)
             db.refresh(attempt)
-            return _complete_sent(db, ticket, attempt, actor, body, account, inbound, matched)
+            return _complete_sent(
+                db,
+                ticket,
+                attempt,
+                actor,
+                body,
+                account,
+                inbound,
+                matched,
+                automated=automated,
+            )
         raise AppError("Could not send the reply", status_code=502, code="gmail_send_failed") from exc
     except GmailSendRejected as exc:
         _mark_attempt(db, attempt.id, SendAttemptStatus.FAILED.value, error=str(exc))
@@ -175,6 +221,7 @@ def reply_to_ticket(db: Session, ticket_id: UUID, body: str, actor: User) -> Mes
         inbound,
         result.gmail_message_id,
         result,
+        automated=automated,
     )
 
 
@@ -182,12 +229,19 @@ def save_draft(db: Session, ticket_id: UUID, body: str, actor: User) -> AiRun:
     ticket = _lock_ticket(db, ticket_id)
     if ticket.status not in DRAFT_FROM:
         raise ConflictError("Draft cannot be edited in this ticket state")
-    run = db.scalar(
-        select(AiRun).where(AiRun.ticket_id == ticket.id).order_by(AiRun.created_at.desc())
-    )
+    run = _latest_run(db, ticket.id)
     if run is None:
-        raise ConflictError("No draft exists for this ticket")
-    run.draft_text = body
+        run = AiRun(
+            ticket_id=ticket.id,
+            draft_text=body,
+            decision=Decision.NEEDS_REVIEW.value,
+            decision_reason="Operator draft saved before classification finished",
+        )
+        db.add(run)
+        db.flush()
+    else:
+        run.draft_text = body
+    ticket.updated_at = datetime.now(UTC)
     db.add(
         AuditEvent(
             actor_type=ActorType.USER.value,
@@ -239,6 +293,77 @@ def reopen_ticket(db: Session, ticket_id: UUID, actor: User) -> Ticket:
     db.commit()
     db.refresh(ticket)
     return ticket
+
+
+def list_ticket_audit(db: Session, ticket_id: UUID) -> list[AuditEvent]:
+    ticket = db.get(Ticket, ticket_id)
+    if ticket is None:
+        raise NotFoundError("Ticket not found")
+    return list(
+        db.scalars(
+            select(AuditEvent)
+            .where(AuditEvent.ticket_id == ticket.id)
+            .order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
+        ).all()
+    )
+
+
+def latest_run(db: Session, ticket_id: UUID) -> AiRun | None:
+    return _latest_run(db, ticket_id)
+
+
+def risk_flags_for(run: AiRun | None) -> list[str] | None:
+    if run is None:
+        return None
+    payload = run.risk_flags_json if isinstance(run.risk_flags_json, dict) else {}
+    raw = payload.get("flags")
+    if not isinstance(raw, list):
+        return []
+    return [str(flag) for flag in raw if str(flag).strip()]
+
+
+def sources_for(db: Session, run: AiRun | None) -> list[dict[str, str | None]] | None:
+    if run is None:
+        return None
+    raw_ids = run.retrieved_chunk_ids if isinstance(run.retrieved_chunk_ids, list) else []
+    ordered: list[str] = []
+    for item in raw_ids:
+        text = str(item).strip()
+        if text and text not in ordered:
+            ordered.append(text)
+    if not ordered:
+        return []
+
+    uuids: list[UUID] = []
+    for raw in ordered:
+        try:
+            uuids.append(UUID(raw))
+        except ValueError:
+            continue
+    clauses = [DocumentChunk.qdrant_point_id.in_(ordered)]
+    if uuids:
+        clauses.append(DocumentChunk.id.in_(uuids))
+    rows = list(db.scalars(select(DocumentChunk).where(or_(*clauses))).all())
+    by_point = {row.qdrant_point_id: row for row in rows if row.qdrant_point_id}
+    by_id = {str(row.id): row for row in rows}
+    documents = {
+        document.id: document
+        for document in db.scalars(
+            select(Document).where(Document.id.in_({row.document_id for row in rows}))
+        ).all()
+    } if rows else {}
+
+    sources: list[dict[str, str | None]] = []
+    for raw in ordered:
+        row = by_point.get(raw) or by_id.get(raw)
+        title = None
+        locator = None
+        if row is not None:
+            locator = row.source_locator
+            document = documents.get(row.document_id)
+            title = document.title if document is not None else None
+        sources.append({"id": raw, "title": title, "locator": locator, "excerpt": None})
+    return sources
 
 
 def assign_ticket(db: Session, ticket_id: UUID, assigned_to: UUID | None, actor: User) -> Ticket:
@@ -298,15 +423,21 @@ def _latest_inbound(db: Session, ticket_id: UUID) -> Message | None:
     )
 
 
-def _latest_run_id(db: Session, ticket_id: UUID) -> UUID | None:
+def _latest_run(db: Session, ticket_id: UUID) -> AiRun | None:
     return db.scalar(
-        select(AiRun.id).where(AiRun.ticket_id == ticket_id).order_by(AiRun.created_at.desc())
+        select(AiRun).where(AiRun.ticket_id == ticket_id).order_by(AiRun.created_at.desc())
     )
 
 
-def _idempotency_key(ticket_id: UUID, body: str) -> str:
+def _latest_run_id(db: Session, ticket_id: UUID) -> UUID | None:
+    run = _latest_run(db, ticket_id)
+    return run.id if run is not None else None
+
+
+def _idempotency_key(ticket_id: UUID, body: str, *, automated: bool = False) -> str:
     digest = hashlib.sha256(body.encode("utf-8")).hexdigest()[:32]
-    return f"{ticket_id}:human:{digest}"
+    kind = "bot" if automated else "human"
+    return f"{ticket_id}:{kind}:{digest}"
 
 
 def _header(headers: dict | None, name: str) -> str | None:
@@ -341,12 +472,14 @@ def _complete_sent(
     db: Session,
     ticket: Ticket,
     attempt: SendAttempt,
-    actor: User,
+    actor: User | None,
     body: str,
     account: GmailAccount,
     inbound: Message | None,
     gmail_message_id: str,
     result: SendResult | None = None,
+    *,
+    automated: bool = False,
 ) -> Message:
     existing = _message_for_gmail_id(db, gmail_message_id)
     now = datetime.now(UTC)
@@ -360,7 +493,7 @@ def _complete_sent(
             subject=ticket.subject,
             body_text=body,
             sent_at=now,
-            headers_json={AUTHOR_HEADER: "human"},
+            headers_json={AUTHOR_HEADER: "bot" if automated else "human"},
         )
         db.add(existing)
         try:
@@ -374,14 +507,16 @@ def _complete_sent(
     attempt.gmail_message_id = gmail_message_id
     attempt.completed_at = now
     attempt.error = None
-    ticket.status = TicketStatus.REPLIED.value
+    ticket.status = (
+        TicketStatus.AUTO_REPLIED.value if automated else TicketStatus.REPLIED.value
+    )
     ticket.last_message_at = now
     db.add(
         AuditEvent(
-            actor_type=ActorType.USER.value,
-            actor_id=actor.id,
+            actor_type=ActorType.WORKER.value if automated else ActorType.USER.value,
+            actor_id=None if actor is None else actor.id,
             ticket_id=ticket.id,
-            event_type="ticket.replied",
+            event_type="ticket.auto_replied" if automated else "ticket.replied",
             event_data_json={
                 "send_attempt_id": str(attempt.id),
                 "gmail_message_id": gmail_message_id,

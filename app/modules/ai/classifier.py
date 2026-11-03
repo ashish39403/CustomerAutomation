@@ -3,7 +3,7 @@ from __future__ import annotations
 from langchain_core.prompts import ChatPromptTemplate
 
 from app.core.config import settings
-from app.modules.ai.llm import chat_model
+from app.modules.ai.llm import structured_model
 from app.modules.ai.schemas import Classification
 
 PROMPT = ChatPromptTemplate.from_messages(
@@ -28,7 +28,7 @@ PROMPT = ChatPromptTemplate.from_messages(
 
 
 def classify(*, subject: str | None, from_email: str, body: str | None) -> Classification:
-    model = chat_model(settings.classifier_model).with_structured_output(Classification)
+    model = structured_model(Classification, settings.classifier_model)
     chain = PROMPT | model
     result = chain.invoke(
         {

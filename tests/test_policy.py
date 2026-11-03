@@ -25,9 +25,15 @@ def test_refund_always_escalates() -> None:
     assert "refund" in reason
 
 
-def test_routine_question_needs_review() -> None:
+def test_routine_question_auto_sends() -> None:
     decision, reason = decide(_cls(), evidence_count=2, grounding_ok=True)
-    assert decision == Decision.NEEDS_REVIEW
+    assert decision == Decision.AUTO_SEND
+    assert "automatically" in reason
+
+
+def test_low_confidence_is_handed_off() -> None:
+    decision, _reason = decide(_cls(confidence=0.2), evidence_count=2, grounding_ok=True)
+    assert decision == Decision.ESCALATE
 
 
 def test_missing_evidence_is_insufficient() -> None:
