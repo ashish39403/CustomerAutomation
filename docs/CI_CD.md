@@ -1,61 +1,32 @@
-# CI/CD Pipeline
+# CI Pipeline (GitHub Actions)
 
-GitHub Actions se **lint → tests → docker build → GHCR push → SSH deploy**, aur running containers Docker Compose me.
+**Abhi sirf CI hai** (lint + tests + docker build). Deployment/GHCR push server setup hone pe add honga.
 
 ## Files
 
 | File | Kya karta hai |
 |---|---|
-| `.github/workflows/ci.yml` | Har push/PR pe: ruff lint, pytest (Postgres 18 service + alembic), Docker build. `main` pe: image GHCR me push. |
-| `.github/workflows/deploy.yml` | Manual button + `main` push pe: server pe SSH karke `docker compose pull && up -d`. |
+| `.github/workflows/ci.yml` | Har push/PR pe: ruff lint, pytest (Postgres 18 service + alembic), Docker build (push nahi). |
 | `Dockerfile` | uv sync, non-root user, `entrypoint.sh` jo `alembic upgrade head` chalata hai. |
 | `docker/entrypoint.sh` | Migrations. Sirf api container chalata hai; worker pe `RUN_MIGRATIONS=0` (race avoid). |
 | `docker-compose.yml` | `api` + `worker` + `qdrant`, optional `postgres` (`docker compose up postgres`). |
 | `.dockerignore` | tests / frontend / dev-files image ke bahar. |
 
-## CI flow (har PR/push)
+## CI flow (har PR/push pe 3 checks)
 
 1. **lint** — `uv sync --frozen` + `ruff check .` (E501 off hai — AI prompt strings intentionally lambi hain).
 2. **test** — `postgres:18-alpine` service (`test/test/customerautomation`) → `alembic upgrade head` → `uv run pytest -q`.
-3. **build** — Dockerfile build, push nahi (GHA layer cache).
-4. **push** (sirf `main`) — `ghcr.io/<owner>/customerautomation:sha-xxxx` + `:latest` (GHCR lowercase rule pakka).
+3. **build** — Dockerfile build hota hai, push nahi (GHA layer cache).
 
-## Deploy setup (ek baar)
+Triggers: `push main`, koi bhi `pull_request`, manual `workflow_dispatch`.
 
-`Settings > Secrets and variables > Actions` me:
+## Future (jab deployment aaye)
 
-**Variables (non-secret):**
+Es cheez ka plan ready hai (`main` pe): image GHCR push (`:<sha>` + `:latest`) + SSH deploy (`docker compose pull && up -d`). Us waqt ye chahiye hoga:
 
-| Name | Example |
-|---|---|
-| `DEPLOY_HOST` | `203.0.113.10` |
-| `DEPLOY_USER` | `deploy` |
-| `DEPLOY_DIR` | `/opt/customerautomation` |
-
-**Secrets:**
-
-| Name | Note |
-|---|---|
-| `SSH_PRIVATE_KEY` | poora private key; public half server ke `~/.ssh/authorized_keys` me |
-
-Server pe **ek baar** GHCR login (PAT me `read:packages` scope):
-
-```bash
-docker login ghcr.io -u <github-username> -p <PAT>
-```
-
-Server ke `docker-compose.yml` me images pull se aaye:
-
-```yaml
-api:
-  image: ghcr.io/<owner>/customerautomation:latest
-worker:
-  image: ghcr.io/<owner>/customerautomation:latest
-```
-
-(`<owner>` lowercase — e.g. `ashish/customerautomation`.)
-
-`DEPLOY_HOST`/`DEPLOY_USER` set nahi hain to deploy job khud skip hota hai — CI pehle hi 3 checks pe fail ya pass hoga.
+- repo Variables: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_DIR`
+- secret: `SSH_PRIVATE_KEY`
+- server pe GHCR login (PAT with `read:packages`)
 
 ## Local Docker
 
@@ -69,4 +40,4 @@ docker compose up -d postgres # offline dev ke liye (DATABASE_URL: postgresql://
 ## Important
 
 - `GOOGLE_TOKEN_ENCRYPTION_KEY` kabhi badalna ho to naye key se tokens re-encrypt karke hi deploy karo — warna `gmail refresh token decrypt failed` waps aayega (aaj wala issue).
-- Migrations api container ke start pe chalti hain; server ke `.env` me `DATABASE_URL` (Neon) hona chahiye. Deploy script sirf new image `pull` karta hai — migrations `entrypoint.sh` se khud ho jate hain.
+- Migrations api container ke start pe chalti hain; `.env` me `DATABASE_URL` (Neon) hona chahiye.
