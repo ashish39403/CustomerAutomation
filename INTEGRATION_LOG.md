@@ -114,3 +114,31 @@ fixes whatever disagrees with `CONTRACT.md`.
   not by a live browser session.
 
 ---
+
+## Phase 3 — Tickets list
+
+**What changed**
+- No code changes needed this phase: the backend routes
+  (`GET /api/tickets?status=&page=&page_size=&q=`) and the frontend server-side
+  wiring (landed in `e570906`) already match the contract. Verified only.
+
+**Tested** (all with a real session cookie, backend on `:8000`)
+- Filter counts vs `/api/stats` — exact match:
+  `stats={"auto_replied":5,"handed_off":1,"pending":0}` vs list totals
+  `pending=0, auto_replied=5, handed_off=1, all=6`.
+- Pagination: `page_size=4` → page 1 (4 ids) + page 2 (2 ids), **0 overlap**,
+  `updated_at DESC` order confirmed; `total=6, pages=2` on both pages.
+- Beyond-range page (`page=9`) → `200 {"items":[], ...}` (empty state, not an error).
+- Search: `q=ashish` → 4 hits, all matching `customer_email`;
+  `q=order` → 1 hit matching `subject` — both fields covered, case-insensitive.
+- Validation: `status=bogus` → `422` (`literal_error`, `code: validation_error`);
+  `page=0` → `422` (`ge: 1`).
+- Frontend: `TicketsPage` sends `status` / `page` / `page_size` / `q` to the server
+  (300ms debounce, page reset on filter/search change, distinct empty vs no-match
+  states, server-owned `pages` for `Pagination`). Vite transform → 200;
+  `tsc -b` clean, `npm run test` 30/30 (run at Phase 2, nothing changed since).
+
+**Failed / fixes**
+- None.
+
+---
