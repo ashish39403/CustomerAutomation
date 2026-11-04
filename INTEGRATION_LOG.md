@@ -285,3 +285,142 @@ fixes whatever disagrees with `CONTRACT.md`.
   verified from library defaults + code, not by a live hidden tab.
 
 ---
+
+## Phase 7 — Production checks + final report
+
+**What changed** — no code changes; verification only.
+
+**Tested**
+- **A. Public probes (no cookie):** `GET /health` → `200 {"status":"ok"}`;
+  `GET /health/ready` → `200 {"status":"ok","database":{...},"qdrant":{...},"gmail":{...}}`.
+- **B. Auth sweep (no cookie):** 7 GET + 3 POST protected routes
+  (`/api/auth/me`, `/api/stats`, `/api/tickets`, detail, `/api/gmail/status`,
+  `/api/jobs`, `/api/documents`, reply, escalate, job retry) → **all 401**
+  `{"detail":"Not authenticated","code":"unauthorized"}`.
+- **C. CORS:** allowed origin `http://localhost:5173` →
+  `access-control-allow-origin: http://localhost:5173` +
+  `access-control-allow-credentials: true`; disallowed origin
+  `http://evil.example` → **no** ACAO header. Origins come from `.env`
+  `CORS_ORIGINS` via `settings.cors_origin_list` (nothing hard-coded).
+- **D. Production boot:** `APP_ENV=production` + `uvicorn app.main:app --port 8010`
+  → `/health` 200; login 200 sets
+  `ca_session=…; path=/; Max-Age=604800; httponly; samesite=lax; **secure**`
+  (HttpOnly, SameSite=Lax, Secure only in production, 7-day max-age — exact
+  contract); wrong password → `401 {"detail":"Invalid credentials","code":"unauthorized"}`;
+  `/api/stats` with the cookie → 200. Clean shutdown afterwards.
+- **E. Frontend production build:** `npm run build` (`tsc -b && vite build`) →
+  pass (`dist/` emitted, 17.4s).
+- **F. No hard-coded secrets:** no backend URL / password literals in
+  `frontend/src`; no literal dashboard password in `app/`; `.env` is git-ignored
+  and untracked (`git ls-files .env` → empty).
+- **Final smoke of the seven pinned endpoints** on the running dev server:
+  `/health` 200 · login 200 · `/api/stats` 200 · list 200
+  (`total=3 pages=2 items=2`) · detail 200 (2 messages, authors `bot,customer`) ·
+  reply with empty body → 422 exact body · dashboard `:5173` → 200.
+
+**Failed / fixes** — none this phase.
+
+---
+
+# FINAL REPORT
+
+### Phases passed
+
+| Phase | Result | Evidence / commit |
+| --- | --- | --- |
+| 0 Contract & boot | ✅ | `CONTRACT.md` written; `GET /health` at root → 200; both dev servers up |
+| 1 CORS & auth | ✅ | login/logout/me, cookie rules, 401/422 bodies exact — `0d2615b` |
+| 2 Stats | ✅ | `/api/stats` == direct SQL; OverviewPage error branch — `4575cc8` |
+| 3 Tickets list | ✅ | filter totals == stats; pagination 0-overlap; `q` search; 422s — `76707f6` |
+| 4 Ticket detail | ✅ | 200/404/401 exact; frontend 404 message fixed — `1238a39` |
+| 5 Human reply | ✅ | 422/404/401 exact; 2 live Gmail sends → 200; `auto_replied`→`handed_off` — `f67cd5c` |
+| 6 In-process poller | ✅ | worker `api:7e347bff` claimed jobs; test email → ticket created; frontend 15s polling + pause-on-hidden (TanStack defaults); `tsc` clean, vitest 30/30 — `795e03d` |
+| 7 Production checks | ✅ | checks A–F + 7-endpoint final smoke (this section) |
+
+Backend pytest: **32 passed, 2 failed** — both failures classified as environment /
+other-agent issues (see open issues 2–3), not contract or Phase 6 regressions.
+
+### Contract deviations + reasons
+
+The contract was changed **first**, in `CONTRACT.md`, then reported here:
+
+1. **Phase 2 — status mapping table + `today_total`** (commit `4575cc8`): the
+   backend gained a distinct internal `auto_replied` state
+   (`002_auto_replied_status.py`), so the contract now records which internal
+   states bucket into `pending` / `auto_replied` / `handed_off`, and documents
+   `today_total` as a server-side UTC-day count. The same sets feed `/api/stats`
+   and the `/api/tickets` filter, so counts match by construction.
+2. **Phase 0 — `GET /health` at the root** (folded into the baseline/phase-1
+   commit): the route used to exist only at `/api/v1/health`; the contract pins
+   the root path, so the mount was moved to match.
+
+Everything else was fixed **on the code side to match the contract** (no contract
+change): frontend `today_total` usage, ticket-detail 404 message, UUID string
+ids, server-side pagination/search, 422/401/404/502 bodies. Both sides now match
+`CONTRACT.md` for all seven pinned endpoints and the auxiliary routes.
+
+### Open issues
+
+1. **`enqueue_poll_if_due()` picks a connected Gmail account with no `ORDER BY`**
+   (`app/modules/jobs/worker.py`). Test runs insert fake connected accounts
+   (`…@harborandpine.test`, plaintext `test-token`) and poll jobs then target
+   them → `gmail refresh token decrypt failed` / `gmail account missing` dead
+   jobs (poll outage 10:19–10:30 UTC on 2026-11-04, self-recovered after the
+   fake account was cleaned up). Fix: deterministic ordering + skip accounts
+   whose token is not Fernet-shaped.
+2. **`tests/test_jobs.py::test_reaper_recovers_expired_lease` fails while any
+   worker is live** — `assert 'running' == 'retry_wait'` (line 69): the reaper
+   works (`jobs.lease_expired` logged), but a concurrently running worker
+   (standalone `python -m app.worker` or a dev server's in-process worker)
+   re-claims the requeued test job between the reaper and the assertion.
+   Reproduced twice. Fix: run pytest with servers stopped, or give tests an
+   isolated database.
+3. **`tests/test_policy.py::test_refund_always_escalates`** —
+   `assert 'refund' in 'category requires a human'`: caused by the backend
+   agent's **uncommitted** `policy.py` rewrite. The decision is still
+   `ESCALATE` (behavior correct); owner should align the reason string or the
+   test when committing.
+4. **`ai.classifier_failed: 'Settings' object has no attribute 'classifier_timeout_s'`**
+   — the backend agent's in-flight `classifier.py` references a setting not yet
+   added to `config.py`. Not contract-related.
+5. **502 reply path not exercised live** (`gmail_send_failed` is implemented but
+   forcing a Gmail rejection would risk the real mailbox).
+6. **Two workers can ingest the same Gmail message concurrently** →
+   `uq_tickets_gmail_thread_id` UniqueViolation; recovered by job retry (no data
+   loss). A dedupe-before-insert would remove the retry noise.
+7. **No browser automation in this environment** — error states and
+   pause-on-hidden were verified via code path + `tsc` + vitest + Vite
+   transforms, not a live browser session.
+
+### Exact local run commands
+
+```bash
+# --- Backend (from the repo root; all secrets/URLs come from .env) ---
+uv run fastapi dev app/main.py        # http://127.0.0.1:8000
+#   starts the API + seeds + the in-process jobs worker (Gmail poller) automatically
+uv run python -m app.worker           # OPTIONAL standalone worker (safe alongside;
+                                      #  job leases prevent double-claims)
+
+# --- Frontend (separate terminal) ---
+cd frontend
+npm install
+npm run dev                           # http://localhost:5173 (Vite proxies /api → :8000;
+                                      #  base URL from VITE_API_URL, empty = same origin)
+
+# --- Tests ---
+uv run pytest -q                      # backend suite (stop servers first — open issue 2)
+cd frontend
+npm run typecheck                     # tsc -b
+npm run test                          # vitest (30 tests)
+npm run build                         # production build
+
+# --- Login (creds seeded from .env DASHBOARD_USERNAME / DASHBOARD_PASSWORD) ---
+curl -c cookies.txt -X POST http://127.0.0.1:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin","password":"<DASHBOARD_PASSWORD>"}'
+# then: curl -b cookies.txt http://127.0.0.1:8000/api/stats
+```
+
+*Environment note: the backend, frontend and other agents shared this working
+tree throughout; every phase re-read both sides immediately before touching them
+and committed only its own files (`git add <paths>`, never `git add -A`).*
