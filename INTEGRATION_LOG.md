@@ -74,3 +74,43 @@ fixes whatever disagrees with `CONTRACT.md`.
   JSON body (`422 json_invalid`) → re-ran with the body in a file (`-d @file`).
 
 ---
+
+## Phase 2 — Stats / Overview
+
+**What changed**
+- `CONTRACT.md`: added the **internal → API status mapping** table (the backend
+  gained a distinct `auto_replied` state in `002_auto_replied_status.py`, so the
+  contract now records which internal states bucket into `pending` / `auto_replied` /
+  `handed_off`). The same sets in `app/api/routes/tickets.py` feed both `/api/stats`
+  and the `/api/tickets` filter, so counts match by construction.
+- Frontend `frontend/src/lib/types.ts`: `StatsResponse` gained `today_total`.
+- Frontend `frontend/src/pages/OverviewPage.tsx`:
+  - "Total today" now reads `stats.today_total` from the API (server-side count of
+    tickets created today, UTC) instead of summing the other three cards client-side.
+  - Re-added the **error branch**: a non-404 stats failure (backend down, 5xx) renders
+    `ErrorState` with `apiErrorMessage(...)` + a Retry button instead of blank cards.
+    (This code had been lost in a parallel agent's rewrite; re-applied.)
+
+**Tested**
+- `GET /api/stats` (session cookie) → `{"auto_replied":5,"handed_off":1,"pending":0,"today_total":0}`.
+- Direct SQL against the same DB with the identical mapping →
+  `{"auto_replied":5,"handed_off":1,"pending":0,"today_total":0}` — **exact match**
+  (internal counts: `auto_replied`×5, `escalated`×1).
+- `npm run typecheck` → clean; `npm run test` → 30/30 passed (includes the stats
+  fixture with `today_total` and the `/api/stats` path assertion).
+- Vite transforms `OverviewPage.tsx` → 200 (the error branch compiles in dev).
+- Error path (code-verified, no browser): backend unreachable → `fetch` throws
+  `ApiError(0, "Network error — could not reach the API")` → `isNotImplemented` is
+  false (only 404) → `statsFailed` → `ErrorState` with that message + Retry;
+  react-query `refetchInterval: 15_000` auto-retries, so the cards recover on their
+  own once the backend is back.
+
+**Failed / fixes**
+- Early SQL helper used the pre-`AUTO_REPLIED` mapping (`replied` → auto_replied) and
+  disagreed with the API (`SQL: auto_replied 0 / API: 5`) → the helper was updated to
+  the current mapping; the mismatch was in the helper, not the API.
+- **Limitation:** no browser automation in this environment — the backend-down →
+  error UI → recovery loop was verified by code path + typecheck + Vite transform,
+  not by a live browser session.
+
+---
