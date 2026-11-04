@@ -65,13 +65,15 @@ def decide(
 
     # 2. Category check — set membership is O(1)
     if classification.category in ESCALATE_CATEGORIES:
-        return Decision.ESCALATE, "category requires a human"
+        return Decision.ESCALATE, (
+            f"category {classification.category.value} requires a human"
+        )
 
     # 3. Flags — set intersection only if flags non-empty
-    if classification.risk_flags and (
-        ESCALATE_FLAGS.intersection(classification.risk_flags)
-    ):
-        return Decision.ESCALATE, "risk flags require a human"
+    escalated_flags = ESCALATE_FLAGS.intersection(classification.risk_flags or ())
+    if escalated_flags:
+        names = ", ".join(sorted(escalated_flags))
+        return Decision.ESCALATE, f"risk flags require a human: {names}"
 
     # 4. Remaining cheap checks
     if classification.needs_live_order_data:
