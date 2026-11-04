@@ -16,7 +16,14 @@ from app.db.models.enums import GmailAccountStatus, JobStatus, JobType
 from app.db.session import SessionLocal
 from app.modules.jobs.errors import PermanentJobError, TransientJobError
 from app.modules.jobs.handlers import run_handler
-from app.modules.jobs.queue import claim, enqueue, mark_dead, mark_succeeded, reap_expired_leases, schedule_retry
+from app.modules.jobs.queue import (
+    claim,
+    enqueue,
+    mark_dead,
+    mark_succeeded,
+    reap_expired_leases,
+    schedule_retry,
+)
 
 log = structlog.get_logger("worker")
 _stop = False

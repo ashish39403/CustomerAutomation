@@ -3,9 +3,7 @@ from __future__ import annotations
 import structlog
 from fastapi import APIRouter, status
 from pydantic import BaseModel
-from sqlalchemy import text
-
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.core.config import settings
 from app.db.models import GmailAccount

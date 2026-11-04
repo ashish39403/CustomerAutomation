@@ -11,7 +11,6 @@ from app.modules.gmail.ingest import ingest_email
 from app.modules.gmail.normalize import normalize_message
 from app.modules.gmail.schemas import NormalizedEmail
 
-
 MAILBOX = "support@harborandpine.test"
 
 

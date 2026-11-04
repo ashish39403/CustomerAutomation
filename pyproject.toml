@@ -50,3 +50,6 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+# E501 off: AI prompts and reply-template strings are intentionally long.
+# Hard-wrapping them inside quotes would change the text the model receives.
+ignore = ["E501"]

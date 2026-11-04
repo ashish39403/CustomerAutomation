@@ -25,6 +25,15 @@ If this file itself must change, change it here first and record the reason in
 The `status` query filter accepts these three plus `all` (default `all`).
 Any other value → 422.
 
+**Internal → API mapping** (kept in one place, `app/api/routes/tickets.py`, and
+used by *both* `/api/stats` and the `/api/tickets` filter so counts always match):
+
+| internal state(s) | API status |
+| --- | --- |
+| `new`, `processing`, `needs_review`, `approved` | `pending` |
+| `auto_replied` (bot sent the reply) | `auto_replied` |
+| `replied` (human replied), `escalated`, `failed`, `resolved` | `handed_off` |
+
 ## Endpoints
 
 ### `GET /health` — public
