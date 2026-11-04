@@ -170,3 +170,38 @@ fixes whatever disagrees with `CONTRACT.md`.
   and fixed before committing.
 
 ---
+
+## Phase 5 — Human reply
+
+**What changed**
+- No code changes: backend `reply_to_ticket` (`app/modules/tickets/service.py`) and
+  the frontend `ReplyBox` already match the contract. Verified only.
+
+**Tested**
+- Safe cases (all exact contract bodies):
+  - `{"body":"   "}` → `422` (`string_too_short`, stripped before validation);
+    `{}` → `422` (`Field required`).
+  - Unknown ticket → `404 {"detail":"Ticket not found","code":"not_found"}`.
+  - No cookie → `401 {"detail":"Not authenticated","code":"unauthorized"}`.
+- **Live Gmail send** (Gmail connected as `demosydeny3590@gmail.com`; recipient was
+  the agents' test account `extraction311@gmail.com`, both messages clearly marked
+  "Integration test … please ignore"):
+  - `POST /api/tickets/{id}/reply` → `200` with the exact saved message shape:
+    `{"id":"<uuid>","author":"human","body":"…","created_at":"…"}`.
+  - Thread detail afterwards: last message `author=human` with the same body
+    (stored as outbound human message) — and `GET /api/tickets/{id}` still 200.
+  - **Status transition verified on a second ticket:** before `status=auto_replied`
+    → after reply `status=handed_off` (internal `replied` → API `handed_off` per the
+    contract mapping). `/api/stats` moved consistently afterwards.
+- 502 path is implemented (`gmail_send_failed` on rejected/unknown send or no
+  connected account) but not exercised live — forcing a Gmail rejection would risk
+  the real mailbox.
+- Frontend `ReplyBox`: trims the body client-side, `postReply(id, body)` →
+  `POST /api/tickets/{id}/reply` with `{body}`, invalidates `ticket`/`tickets`/
+  `stats` on success, shows `apiErrorMessage` (so a 502 renders
+  "Could not send the reply (HTTP 502)") in a destructive alert.
+
+**Failed / fixes**
+- None.
+
+---
