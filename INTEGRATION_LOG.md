@@ -142,3 +142,31 @@ fixes whatever disagrees with `CONTRACT.md`.
 - None.
 
 ---
+
+## Phase 4 — Ticket detail and 404
+
+**What changed**
+- Frontend `frontend/src/pages/TicketDetailPage.tsx`: a 404 on the detail endpoint
+  used to render the misleading *"The ticket pipeline is not part of the backend yet."*
+  (the `isNotImplemented` branch treats any 404 as "endpoint missing"). Per the
+  contract a detail 404 means **ticket not found**, so the page now always shows
+  `apiErrorMessage(...)` → *"Ticket not found (HTTP 404)"* + Retry. The 404-no-retry
+  predicate in `retry:` is kept (never retry a missing ticket).
+
+**Tested**
+- `GET /api/tickets/{uuid}` → 200 with the contract shape: `messages` ordered
+  oldest → newest (verified by comparing the timestamp order), `author` values in
+  `{customer, human}` observed, `classification` + `reasoning` present on a
+  classified ticket (nullable per contract when absent), UUID string ids throughout.
+- Unknown UUID → `404 {"detail":"Ticket not found","code":"not_found"}` — exact body.
+- Malformed id (`not-a-uuid`) → same 404 body (not a 422).
+- Detail without cookie → `401 {"detail":"Not authenticated","code":"unauthorized"}`.
+- Frontend: ids are `string` in `types.ts` (no `Number()` coercion), `fetchTicket`
+  hits `/api/tickets/{id}` with `encodeURIComponent`. `tsc -b` clean,
+  `npm run test` 30/30, Vite transform of `TicketDetailPage.tsx` → 200.
+
+**Failed / fixes**
+- See "What changed" — the 404 message mismatch was found during this phase's review
+  and fixed before committing.
+
+---
