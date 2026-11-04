@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     job_lease_seconds: int = 60
     gmail_backfill_max: int = 25
     gmail_excluded_senders: str = ""
+    # Run the jobs worker (which drives the Gmail poller) inside the API
+    # process, so `fastapi dev app/main.py` alone starts the whole system.
+    # Tests turn this off (see tests/conftest.py) to avoid hitting Gmail.
+    worker_in_process: bool = True
 
     cors_origins: str = "http://localhost:5173"
 

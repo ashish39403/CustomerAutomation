@@ -1,3 +1,5 @@
+import threading
+import uuid
 from contextlib import asynccontextmanager
 
 import structlog
@@ -42,6 +44,26 @@ async def _require_session(request: Request, call_next):
     return await call_next(request)
 
 
+def _run_jobs_worker(stop: threading.Event) -> None:
+    """Job queue loop (drives the Gmail poller) inside the API process.
+
+    Uses the same `tick()` as the standalone `python -m app.worker`; job leases
+    make running both safe. Runs in a daemon thread so a reload never hangs.
+    """
+    from app.modules.jobs.worker import tick
+
+    worker_id = f"api:{uuid.uuid4().hex[:8]}"
+    log.info("worker.in_process_started", worker_id=worker_id)
+    while not stop.is_set():
+        try:
+            worked = tick(worker_id)
+        except Exception:
+            log.exception("worker.tick_failed")
+            worked = False
+        if not worked:
+            stop.wait(settings.job_poll_interval_seconds)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     configure_logging()
@@ -50,7 +72,17 @@ async def lifespan(_app: FastAPI):
         seed_users(db)
         seed_gmail(db)
         seed_knowledge_docs(db)
+    stop = threading.Event() if settings.worker_in_process else None
+    worker: threading.Thread | None = None
+    if stop is not None:
+        worker = threading.Thread(
+            target=_run_jobs_worker, args=(stop,), name="jobs-worker", daemon=True
+        )
+        worker.start()
     yield
+    if stop is not None and worker is not None:
+        stop.set()
+        worker.join(timeout=10)
     log.info("app.shutdown")
 
 

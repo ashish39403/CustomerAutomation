@@ -205,3 +205,83 @@ fixes whatever disagrees with `CONTRACT.md`.
 - None.
 
 ---
+
+## Phase 6 — In-process poller + live polling
+
+**What changed**
+- `app/core/config.py`: `worker_in_process: bool = True` — the API process also
+  runs the jobs worker (which drives the Gmail poller), so
+  `fastapi dev app/main.py` alone starts the whole system.
+- `app/main.py`: lifespan starts/stops a daemon thread running the same `tick()`
+  as the standalone `python -m app.worker` (worker id `api:<hex8>`), gated by the
+  flag. Job leases make running both safe.
+- `tests/conftest.py`: sets `WORKER_IN_PROCESS=false` **before** importing the app,
+  so pytest never starts a worker or hits the real Gmail mailbox. (This file also
+  carries the backend agent's autouse `_cleanup_test_gmail_accounts` fixture, added
+  in the same shared working tree — committed together here.)
+- Frontend: **no change needed** — every page/component already polls with
+  `refetchInterval: REFRESH_MS` (15s) and TanStack Query v5 defaults handle
+  pause/refresh (see Tested).
+
+**Tested**
+- Fresh boot logs `worker.in_process_started worker_id=api:7e347bff`, then
+  `jobs.claimed` (by `api:7e347bff`) for `process_email` and `poll_gmail`, plus
+  `gmail.poll_complete` events. A **second server boot in a parallel shell** logged
+  `worker.in_process_started api:e3df7d09` — the feature is code-driven, not
+  specific to my shell.
+- **End-to-end ingest:** sent a test email from the plus-alias
+  `demosydeny3590+ca-test@gmail.com` into the connected mailbox (marker
+  `ca-phase6-42225f3a`, gmail id `1a1a60da2fd77020`) → watcher confirmed the
+  in-process worker claimed the `poll_gmail` job (`locked_by='api:7e347bff'`) and
+  **tickets were created** with those markers
+  (`customer=demosydeny3590+ca-test@gmail.com`; the script ran twice, so a second
+  marker `ca-phase6-fe1a958e` also produced a ticket).
+- **Coexistence:** standalone `python -m app.worker` and the API's in-process
+  worker both claim jobs without double-completing (leases). Observed one
+  `uq_tickets_gmail_thread_id` UniqueViolation when both ingested the same message
+  → job retry recovered it (attempts 2 succeeded).
+- **Frontend:** `tsc -b` clean; `npm run test` 30/30. All pages and
+  `SystemStatus` use `refetchInterval: REFRESH_MS` (15s). Pause-on-hidden /
+  refresh-on-focus verified against TanStack Query v5 defaults read from
+  `@tanstack/query-core` `.d.ts`: `refetchIntervalInBackground` defaults to
+  **false** (interval stops while the tab is hidden) and `refetchOnWindowFocus`
+  defaults to **true** (refetch when the tab returns) — no custom code needed.
+
+**Failed / fixes / open issues**
+- **Gmail poll outage 10:19–10:30 UTC** (`gmail refresh token decrypt failed`,
+  poll jobs died after retries): another agent inserted a fake *connected* account
+  `support-7f8f5dd82f@harborandpine.test` with plaintext `test-token`, and
+  `enqueue_poll_if_due()` selects a connected account **without ORDER BY**, so poll
+  jobs targeted the fake account and Fernet decrypt failed. The fake account has
+  since been deleted (its poll jobs remain `dead` with `gmail account missing`)
+  and the real account's token decrypts OK — polls succeed again
+  (`poll_gmail` succeeded 10:31:40 and 10:32:20 UTC). **Latent bug (open):**
+  `enqueue_poll_if_due` should order deterministically and/or skip accounts whose
+  token is not Fernet-shaped.
+- `ai.classifier_failed: 'Settings' object has no attribute 'classifier_timeout_s'`
+  — the backend agent's in-flight (uncommitted) `classifier.py` references a
+  setting not yet present in `config.py`. Not contract-related; their edit to fix.
+- **Backend pytest: 32 passed, 2 failed** — both classified, neither is a Phase 6
+  regression:
+  - `tests/test_jobs.py::test_reaper_recovers_expired_lease` →
+    `AssertionError: assert 'running' == 'retry_wait'` (line 69). The reaper itself
+    works (`jobs.lease_expired` logged; `reap_expired_leases() >= 1` passed); a
+    **concurrently running worker** (standalone `app.worker` or a dev server's
+    in-process worker) re-claims the requeued test job between the reaper and the
+    assertion. The full-suite run shows the in-process worker claiming `test.noop`
+    jobs mid-run. The test assumes no live worker exists — ran twice, failed both
+    times (reported per rule, no fix loop). Suggested: run pytest with servers
+    stopped, or give tests an isolated DB.
+  - `tests/test_policy.py::test_refund_always_escalates` →
+    `assert 'refund' in 'category requires a human'`: the backend agent's
+    **uncommitted** `policy.py` rewrite returns a generic category reason. The
+    decision is still `ESCALATE` (behavior correct, reason string differs);
+    owner should align reason or test when committing.
+- Environment churn: a WatchFiles reloader was once wedged (missed `app/main.py`
+  edits) requiring a manual backend restart; multiple agents run competing servers
+  on `:8000` (ghost PID-0 `LISTENING` rows appear in `netstat`). Always re-read
+  files before editing and re-verify after commits.
+- **Limitation:** no browser automation in this environment — pause-on-hidden was
+  verified from library defaults + code, not by a live hidden tab.
+
+---
