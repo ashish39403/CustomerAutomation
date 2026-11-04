@@ -6,7 +6,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from app.core.config import settings
 
 
-def chat_model(model: str | None = None, *, temperature: float = 0) -> ChatOpenAI:
+def chat_model(model: str | None = None, *, temperature: float = 0.2) -> ChatOpenAI:
     if not settings.llm_api_key:
         raise RuntimeError("No API key configured for chat models")
     return ChatOpenAI(
@@ -18,7 +18,7 @@ def chat_model(model: str | None = None, *, temperature: float = 0) -> ChatOpenA
     )
 
 
-def structured_model(schema: type, model: str, *, temperature: float = 0):
+def structured_model(schema: type, model: str, *, temperature: float = 0.2):
     """Call a .env model and parse a schema.
 
     The configured gateway rejects OpenAI json_schema mode. Tool calling works
