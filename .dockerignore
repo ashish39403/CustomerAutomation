@@ -1,5 +1,6 @@
 .venv
 .git
+.github
 .pytest_cache
 .ruff_cache
 .mypy_cache
@@ -8,7 +9,18 @@ __pycache__
 *.pyc
 .env
 .cursor
-docs
 agent-transcripts
 htmlcov
 .coverage
+coverage.xml
+data
+tests
+scripts
+docs
+frontend
+dashboard
+node_modules
+package-lock.json
+Dockerfile
+docker-compose.yml
+README.md
